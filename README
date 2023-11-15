@@ -51,3 +51,5 @@ BUGS:
   own thread, though that introduces all sorts of other considerations. I
   did try it, funnily enough, and still have the remains of that code so
   maybe some comparative testing is what's needed
+- The curses thing is a WIP: it cuts off your scrollback buffer when really
+  it should *use* it, and it can't handle input with embedded NUL chars

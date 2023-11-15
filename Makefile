@@ -20,13 +20,12 @@
 #	pcc -O0 -g -c ssss.c
 #	gcc ssss.o -o ssss
 #
-# Sometimes it needs GNU cpp also, with -ansi, at least with glibc, which
-# seems to disagree with pcc's idea of C99. Don't forget to pass -ansi to
-# cpp also:
+# Sometimes it needs GNU cpp also. Don't forget to pass whatever -std you're
+# using to both:
 #	# Preprocess (.c -> .i):
-#	cpp -ansi -DWITH_CURSES ssss.c > ssss.i
+#	cpp -std=c99 -DWITH_CURSES -DDEBUG_MACROS ssss.c > ssss.i
 #	# Compile and assemble (.i -> .s -> .o)
-#	pcc -ansi -O1 -c ssss.i
+#	pcc -std=c99 -O1 -c ssss.i
 #	# Link
 #	gcc -lcurses -s ssss.o -o ssss
 

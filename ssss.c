@@ -1,4 +1,4 @@
-/* static inline foo(const unsigned char restrict* bar), and such
+/* static __inline__ foo(const unsigned char __restrict__* bar), and such
  * or INLINE foo(const unsigned char RESTRICT* bar)
  * might have gone a bit heavy on that stuff is what I'm saying
  *
@@ -17,9 +17,9 @@
  *  failing to compile on a future system, compared to the odds of anyone
  *  finding a system old enough to not have sys/select.h? And who would get
  *  pissier about it?
- ** Use curses pads instead of windows? Or maybe some kind of auto-growing
- *  window, so that we don't use the whole screen immediately. See how less
- *  does it */
+ ** The curses thing murderises the scrollback buffer. Use curses pads
+ *  instead of windows? Or maybe some kind of auto-growing window, so that
+ *  we don't use the whole screen immediately. Find out how less does it */
 
 /* feature_test_macros(7):
  ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
@@ -82,6 +82,7 @@
 #include <signal.h>	/* sigaction(2), kill(2), sys_siglist[] if we can't
 			 * get strsignal(3) */
 #undef _BSD_SOURCE
+#undef _SVID_SOURCE /* justin case */
 #undef _DEFAULT_SOURCE
 
 #ifdef DEBUG_MACROS
@@ -163,10 +164,12 @@ typedef enum { false = 0, true = 1 } bool;
 #endif
 
 /* Take advantage of features where available */
-#if __STDC_VERSION__ >= 199901L || \
-	(defined(__GNUC__) && !defined(__STRICT_ANSI__))
+#if __STDC_VERSION__ >= 199901L
 # define INLINE static inline
 # define RESTRICT restrict
+#elif (defined(__GNUC__) && !defined(__STRICT_ANSI__))
+# define INLINE static __inline__
+# define RESTRICT __restrict__
 #else /* Neither -std=c99 nor -std=gnu89 */
 # define INLINE
 # define RESTRICT
@@ -188,7 +191,7 @@ const unsigned char
 
 #define TIMESTAMP_SIZE (sizeof "[00:00:00.000000] ")
 
-INLINE void /* clang actually does inline this */
+void
 sprint_time(char* RESTRICT buf)
 /* buf must be TIMESTAMP_SIZE */
 {
@@ -228,12 +231,12 @@ mkprefix(const unsigned char flags, const int fd, char* RESTRICT prefixbuf)
 /* TODO: the two prepend_lines functions need to be merged properly */
 
 INLINE void
-prepend_lines(FILE* RESTRICT outstream, char* RESTRICT prefixstr,
-		char* unprinted, size_t n_unprinted)
-		/*  ^ can't be RESTRICTed because it's aliased in the
-		 * function body by newline_ptr */
+prepend_lines(FILE* RESTRICT outstream, const char* RESTRICT prefixstr,
+		const char* unprinted, size_t n_unprinted)
+		      /*  ^ can't be RESTRICTed because it's aliased
+		       * in the function body by newline_ptr */
 {
-	char* newline_ptr = unprinted;
+	const char* newline_ptr = unprinted;
 
 	/* Look for a newline anywhere but the last char */
 	while ((newline_ptr = memchr(unprinted, '\n', n_unprinted - 1))) {
@@ -296,7 +299,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	 *
 	 * Also, writers of code readability guidelines are fannies */
 
-	const char* colour =
+	const char* RESTRICT colour =
 		(flags & FLAG_COLOUR)
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
@@ -398,7 +401,7 @@ set_up_ncurses(WINDOW* RESTRICT* window)
 {
 	char vertical_line; /* used later in box(3X) */
 
-	/* Everybody remain calm, it's just a cast to shut up the compiler */
+	/* just a cast to shut up the compiler */
 	atexit((void (*)(void))endwin);
 
 	initscr();
