@@ -19,7 +19,17 @@
  *  pissier about it?
  ** The curses thing murderises the scrollback buffer. Use curses pads
  *  instead of windows? Or maybe some kind of auto-growing window, so that
- *  we don't use the whole screen immediately. Find out how less does it */
+ *  we don't use the whole screen immediately. Find out how less does it
+ ** waddnstr(3X) can't deal with embedded NUL chars, but waddch(3X) syncs
+ *  we can't just call that iteratively. waddnstr(3X) also doesn't tell us
+ *  where it left off (such as eg. strchrnul(3)) so we'd have to make a
+ *  second pass over the string with memchr(3) to find NUL, and restart
+ *  from there, until memchr(3) returned NULL; or, make one big pass over
+ *  the string with memchr(3) iteratively, replacing NULs (with what?),
+ *  then call waddnstr(3X). That minimises calls to waddnstr(3X) but it's
+ *  still one pass too many. Could make an option like -0 to `not break
+ *  when input containing embedded NULs is passed,' but what the fuck is
+ *  the use case for that? */
 
 /* feature_test_macros(7):
  ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
@@ -95,7 +105,9 @@
 #endif
 
 /* STDC */
+#include <assert.h>
 #include <errno.h>
+#include <locale.h>	/* setlocale(3) */
 #include <stdio.h>
 #include <stdlib.h>	/* exit(3), atexit(3) */
 #include <string.h>	/* memcpy(3), memchr(3); strlen(3) and strcmp(3) in
@@ -121,7 +133,6 @@
 #endif /* GNU or POSIX-2008 */
 
 #ifdef WITH_CURSES
-# include <locale.h> /* setlocale(3) */
 /* sidestep some -pedantic compiler warnings when -ansi */
 # ifdef __STRICT_ANSI__
 #  define NCURSES_ENABLE_STDBOOL_H 0
@@ -201,9 +212,6 @@ sprint_time(char* RESTRICT buf)
 	snprintf(buf + sizeof "[00:00:00" - 1, sizeof ".000000] ",
 		/* -1 is to overwrite NUL ^^^ */
 		".%06ld] ", t.tv_usec);
-	/* I wonder  ^ about the portability of %l, and the accuracy of %ld
-	 * even though no compiler has raised objections -- they don't
-	 * object to %lu either */
 }
 
 INLINE void
@@ -228,7 +236,8 @@ mkprefix(const unsigned char flags, const int fd, char* RESTRICT prefixbuf)
 		*prefixbuf++ = ' ', *prefixbuf = '\0';
 }
 
-/* TODO: the two prepend_lines functions need to be merged properly */
+/* TODO: the two prepend_lines functions need to be merged properly.
+ * Consider Tatham-Knuth coroutines */
 
 INLINE void
 prepend_lines(FILE* RESTRICT outstream, const char* RESTRICT prefixstr,
@@ -291,6 +300,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	char prefixstr[TIMESTAMP_SIZE + 3], buf[BUFSIZ];
 	FILE* RESTRICT outstream;
 	const int fd = *(int*)output_target;
+	bool ret = true;
 
 	/* While this does mean that flags must be rechecked every time this
 	 * is called, I tried the other way and believe it or not it was
@@ -317,16 +327,21 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	do {
 		nread = read(ifd, buf, BUFSIZ);
 		switch (nread) {
-			case -1: err(-1, "read(2)");
-			case  0: close(ifd); fflush(outstream); return false;
+			case -1:
+				if (errno == EAGAIN)
+					goto end;
+				else
+					err(-1, "read(2)");
+			case  0: close(ifd); ret = false; goto end;
 			default:
 			fputs(colour, outstream);
 			prepend_lines(outstream, prefixstr, buf, nread);
 		}
 	} while (nread == BUFSIZ);
 
+end:
 	fflush(outstream);
-	return true;
+	return ret;
 }
 
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
@@ -348,7 +363,12 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 		/* Reads into buf starting after the prefix, if any */
 		nread = read(ifd, buf + prefixn, BUFSIZ - prefixn);
 		switch (nread) {
-			case -1: err(-1, "read(2)");
+			case -1:
+			if (errno == EAGAIN)
+				return true;
+			else
+				err(-1, "read(2)");
+
 			case  0: close(ifd); return false;
 			default: write(ofd, buf, nread + prefixn);
 		}
@@ -372,7 +392,11 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 	do {
 		nread = read(ifd, buf, BUFSIZ);
 		switch (nread) {
-			case -1: err(-1, "read(2)");
+			case -1:
+			if (errno == EAGAIN)
+				return true;
+			else
+				err(-1, "read(2)");
 			case  0: close(ifd); return false;
 			default:
 			out_(w, buf, nread);
@@ -390,9 +414,12 @@ set_up_ncurses_window(WINDOW* RESTRICT w, const short colour_pair,
 	idlok(w, true);
 	idcok(w, true);
 	scrollok(w, true);
-	leaveok(w, true);
 	wcolor_set(w, colour_pair, NULL);
 	box(w, vertical_line, 0);
+	/* wmove(3X) the cursor to the bottom of the window, to write lines
+	 * from the bottom up */
+	assert(wmove(w, LINES - 1, 0) != ERR);
+	leaveok(w, true); /* No more need for the cursor */
 }
 
 INLINE void
@@ -453,9 +480,6 @@ parent_listen(const int child_out, const int child_err,
 	 * array of the file descriptors OR'd together. Clever, hey? */
 	unsigned char watch = STDOUT_FILENO | STDERR_FILENO;
 
-	/* for select(2) */
-	const int fdsn = (child_out > child_err ? child_out : child_err) + 1;
-
 	/* ugly stuff for C ```polymorphism''' */
 	void* out_target, * err_target;
 	/* These could and probably should be const, but passing a void* to
@@ -481,12 +505,21 @@ parent_listen(const int child_out, const int child_err,
 
 	do {
 		fd_set fds;
+		int fdsn = 1; /* get the increment over with */
+
 		FD_ZERO(&fds);
-		if (watch & STDOUT_FILENO) FD_SET(child_out, &fds);
-		if (watch & STDERR_FILENO) FD_SET(child_err, &fds);
+		if (watch & STDOUT_FILENO) {
+			fdsn += child_out;
+			FD_SET(child_out, &fds);
+		}
+		if (watch & STDERR_FILENO) {
+			fdsn += child_err;
+			FD_SET(child_err, &fds);
+		}
 #ifdef WITH_CURSES
 		if (flags & FLAG_CURSES) doupdate();
 #endif
+		if (fdsn == 1) break;
 		switch (select(fdsn, &fds, NULL, NULL, NULL)) {
 			case -1: err(-1, "select(2)");
 			case  0: return;
@@ -680,7 +713,7 @@ Options:\n\
 
 void
 clean_up_colour()
-/* May be called with either (void) (atexit(3)) or (int) (sigaction(2)).
+/* May be called with either (void) by atexit(3) or (int) by sigaction(2).
  * Warning: this function has state (static) */
 {
 	static bool already_done = false;
@@ -793,12 +826,8 @@ main(const int argc, char* const argv[])
 	pipe(child_stdout);
 	pipe(child_stderr);
 
-#ifdef WITH_CURSES
-	/* If we're going to setlocale(3), better do it sooner rather
-	 * than later, get the full benefit */
-	if (flags & FLAG_CURSES)
-		setlocale(LC_ALL, "");
-#endif
+	setlocale(LC_ALL, "");
+	/* curses in particular wants this, but also just good practice */
 
 	setup_handle_bad_prog(); /* i.e. handle SIGUSR1. Best do this
 	* before we fork(2), in case of the unlikely event that the child
@@ -821,8 +850,6 @@ main(const int argc, char* const argv[])
 
 	default:
 		parent_prepare(flags, child_stdout, child_stderr);
-
-		/* parent_listen() is the main loop basically */
 		parent_listen(child_stdout[0], child_stderr[0], flags);
 
 		/* cleanup and finishing off */

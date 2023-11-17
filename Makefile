@@ -43,8 +43,9 @@ ifdef DEBUG
 else
 	# Proper build -- don't define CSTANDARD (unless the user does on
 	# the command line), let the compiler use everything it's got
-	OPTIMISATION?=-O2 -march=native -mtune=native
-	LDFLAGS?=-s
+	CPPFLAGS     += -DNDEBUG# Specifically for assert.h
+	OPTIMISATION ?=-O2 -march=native -mtune=native
+	LDFLAGS      ?=-s
 endif
 
 ifdef WITH_CURSES
