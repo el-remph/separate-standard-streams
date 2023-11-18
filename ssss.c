@@ -29,7 +29,8 @@
  *  then call waddnstr(3X). That minimises calls to waddnstr(3X) but it's
  *  still one pass too many. Could make an option like -0 to `not break
  *  when input containing embedded NULs is passed,' but what the fuck is
- *  the use case for that? */
+ *  the use case for that?
+ ** Strictly speaking you're meant to test for both EAGAIN and EWOULDBLOCK */
 
 /* feature_test_macros(7):
  ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
@@ -44,8 +45,6 @@
  *  everyone's caught up, POSIX is very eager to `obsolete' gettimeofday(2)
  *  but considering the speed of response to the introduction of
  *  clock_gettime(2), I'm not holding my breath
- ** _DEFAULT_SOURCE is to get glibc, with the utmost respect, to shut the
- *  fuck up
  *
  ** snprintf(3) is widely available and may be enabled by _BSD_SOURCE,
  *  _XOPEN_SOURCE>=500, or just ISO C99
@@ -85,9 +84,6 @@
 #ifndef _BSD_SOURCE
 #define _BSD_SOURCE
 #endif
-#ifndef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE
-#endif
 #include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
 #include <signal.h>	/* sigaction(2), kill(2), sys_siglist[] if we can't
 			 * get strsignal(3) */
@@ -105,7 +101,6 @@
 #endif
 
 /* STDC */
-#include <assert.h>
 #include <errno.h>
 #include <locale.h>	/* setlocale(3) */
 #include <stdio.h>
@@ -133,10 +128,23 @@
 #endif /* GNU or POSIX-2008 */
 
 #ifdef WITH_CURSES
+
 /* sidestep some -pedantic compiler warnings when -ansi */
 # ifdef __STRICT_ANSI__
 #  define NCURSES_ENABLE_STDBOOL_H 0
 # endif
+
+# ifdef WITH_CURSES_WIDE
+#  include <wchar.h>	/* mbsrtowcs(3) */
+#  define NCURSES_WIDECHAR 1
+#  define _XOPEN_SOURCE_EXTENDED
+#  define WADDNSTR waddnwstr
+typedef wchar_t curs_char_t;
+# else
+#  define WADDNSTR waddnstr
+typedef char curs_char_t;
+# endif /* with wide curses */
+
 # include <curses.h>
 # include <term.h>
 /* Just make sure that true and false are definitely defined, since curses
@@ -236,8 +244,7 @@ mkprefix(const unsigned char flags, const int fd, char* RESTRICT prefixbuf)
 		*prefixbuf++ = ' ', *prefixbuf = '\0';
 }
 
-/* TODO: the two prepend_lines functions need to be merged properly.
- * Consider Tatham-Knuth coroutines */
+/* TODO: the two prepend_lines functions need to be merged properly */
 
 INLINE void
 prepend_lines(FILE* RESTRICT outstream, const char* RESTRICT prefixstr,
@@ -263,26 +270,33 @@ prepend_lines(FILE* RESTRICT outstream, const char* RESTRICT prefixstr,
 
 #ifdef WITH_CURSES
 int /* int for waddnstr(3X) compatibility */
-prepend_lines_curses(WINDOW* RESTRICT w, const char* unprinted,
-			int /*waddnstr(3X) again*/ n_unprinted)
+prepend_lines_curses(WINDOW* RESTRICT w, const curs_char_t* unprinted,
+		int /*waddnstr(3X) again*/ n_unprinted)
 {
-	const char* newline_ptr = unprinted;
+	const curs_char_t* newline_ptr = unprinted;
 	char prefixstr[TIMESTAMP_SIZE];
 
 	sprint_time(prefixstr);
 
 	/* Look for a newline anywhere but the last char */
+# ifdef WITH_CURSES_WIDE
+	while ((newline_ptr = wmemchr(unprinted, L'\n', n_unprinted - 1))) {
+# else
 	while ((newline_ptr = memchr(unprinted, '\n', n_unprinted - 1))) {
+# endif
+		/* I want to use lots of sizeof here but apparently C's
+		 * type system handles that just fine */
+		size_t n_printed = ++newline_ptr - unprinted;
+		/* ++preincrement  ^^ significant here */
 		waddstr(w, prefixstr);
-		newline_ptr++;
-		n_unprinted -= newline_ptr - unprinted; /* Bit optimistic */
-		waddnstr(w, unprinted, newline_ptr - unprinted);
+		n_unprinted -= n_printed; /* Bit optimistic */
+		WADDNSTR(w, unprinted, n_printed);
 		unprinted = newline_ptr; /* Order is important here */
 	}
 
 	/* Once any embedded newlines have been exhausted, print the rest */
-	waddnstr(w, prefixstr, TIMESTAMP_SIZE);
-	waddnstr(w, unprinted, n_unprinted);
+	waddstr(w, prefixstr);
+	WADDNSTR(w, unprinted, n_unprinted);
 
 	return 0;
 }
@@ -386,11 +400,15 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 	WINDOW* w = (WINDOW*)output_target;
 	ssize_t nread;
 	char buf[BUFSIZ];
-	int (*out_)(WINDOW*, const char*, int) =
-		(flags & FLAG_TIMESTAMPS) ? prepend_lines_curses : waddnstr;
+	int (*out_)(WINDOW*, const curs_char_t*, int) =
+		(flags & FLAG_TIMESTAMPS) ? prepend_lines_curses : WADDNSTR;
 
 	do {
-		nread = read(ifd, buf, BUFSIZ);
+		nread = read(ifd, buf, BUFSIZ
+# ifdef WITH_CURSES_WIDE
+			- 1 /* for NUL */
+# endif
+		);
 		switch (nread) {
 			case -1:
 			if (errno == EAGAIN)
@@ -399,7 +417,19 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 				err(-1, "read(2)");
 			case  0: close(ifd); return false;
 			default:
+# ifdef WITH_CURSES_WIDE
+			buf[nread] = '\0'; /* Hence BUFSIZ - 1 above */
+			{
+				const char* ptr = buf;
+				wchar_t wbuf[BUFSIZ];
+				const size_t fet =
+					mbsrtowcs(wbuf, &ptr, BUFSIZ, NULL);
+				if (fet == (size_t)-1) err(-1, "input");
+				out_(w, wbuf,fet/* wobuffet! */);
+			}
+# else
 			out_(w, buf, nread);
+# endif
 			wnoutrefresh(w);
 		}
 	} while (nread == BUFSIZ);
@@ -418,7 +448,7 @@ set_up_ncurses_window(WINDOW* RESTRICT w, const short colour_pair,
 	box(w, vertical_line, 0);
 	/* wmove(3X) the cursor to the bottom of the window, to write lines
 	 * from the bottom up */
-	assert(wmove(w, LINES - 1, 0) != ERR);
+	wmove(w, LINES - 1, 0);
 	leaveok(w, true); /* No more need for the cursor */
 }
 

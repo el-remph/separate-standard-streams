@@ -11,7 +11,9 @@ but hopefully less mank.
 
 To build, run `make'. There is an extra, WIP feature, printing stdout and
 stderr side-by-side, which requires curses, and can be enabled with
-`make WITH_CURSES=1'.
+`make WITH_CURSES=1'. This also requires libcursesw and C99 for Unicode
+support; in the unlikely event that you are missing either of those, Unicode
+support can be disabled with `make WITH_CURSES=1 WITHOUT_UNICODE=1'.
 
 It sticks to low-level Unix functions, and is written in ANSI C; mostly
 requires only POSIX 1993 (with a couple widely available exceptions
