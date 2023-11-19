@@ -1,5 +1,12 @@
-/* static __inline__ foo(const unsigned char __restrict__* bar), and such
- * or INLINE foo(const unsigned char RESTRICT* bar)
+#define SPIEL "\
+ssss -- split standard streams: highlight the stdout and stderr of a process\n\
+Copyright 2023 the Remph\n\n\
+This is free software under the GNU General Public Licence, version 3 or\n\
+later. For more information, see the GNU GPL, attached in the file `GPL' and\n\
+available at https://gnu.org/licenses/gpl"
+
+/* static __inline__ foo(const unsigned char *__restrict__ bar), and such
+ * or INLINE foo(const unsigned char *RESTRICT bar)
  * might have gone a bit heavy on that stuff is what I'm saying
  *
  * This program outputs into either unix file descriptors, stdio FILE*
@@ -87,12 +94,11 @@
 #include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
 #include <signal.h>	/* sigaction(2), kill(2), sys_siglist[] if we can't
 			 * get strsignal(3) */
-#undef _BSD_SOURCE
-#undef _SVID_SOURCE /* justin case */
-#undef _DEFAULT_SOURCE
-
 #ifdef DEBUG_MACROS
 /* provide a consistent lowest-common-denominator environment */
+# undef _BSD_SOURCE
+# undef _SVID_SOURCE /* justin case */
+# undef _DEFAULT_SOURCE
 # undef  _GNU_SOURCE
 # undef  _XOPEN_SOURCE
 # define _XOPEN_SOURCE 500
@@ -135,7 +141,7 @@
 # endif
 
 # ifdef WITH_CURSES_WIDE
-#  include <wchar.h>	/* mbsrtowcs(3) */
+#  include <wchar.h>	/* mbsrtowcs(3), wmemchr(3) */
 #  define NCURSES_WIDECHAR 1
 #  define _XOPEN_SOURCE_EXTENDED
 #  define WADDNSTR waddnwstr
@@ -147,6 +153,7 @@ typedef char curs_char_t;
 
 # include <curses.h>
 # include <term.h>
+
 /* Just make sure that true and false are definitely defined, since curses
  * only guarantees us TRUE and FALSE, but may also provide true and false
  * from stdbool.h */
@@ -156,9 +163,11 @@ typedef char curs_char_t;
 # ifndef  false
 #  define false 0
 # endif
+
 #else /* without curses */
+
 /* If we have no curses, we need to find a bool of our own */
-# if __STDC_VERSION__ >= 199901L
+# if __STDC_VERSION__ >= 199900L
 #  include <stdbool.h>
 # elif defined(__GNUC__) && !defined(__STRICT_ANSI__)
 #  define bool _Bool
@@ -168,6 +177,7 @@ typedef char curs_char_t;
 #  define INLINE
 typedef enum { false = 0, true = 1 } bool;
 # endif /* -std=c99 or -std=gnu89 */
+
 #endif /* with curses */
 
 /* In case some macros aren't defined in those headers, on very old systems */
@@ -211,7 +221,7 @@ const unsigned char
 #define TIMESTAMP_SIZE (sizeof "[00:00:00.000000] ")
 
 void
-sprint_time(char* RESTRICT buf)
+sprint_time(char *RESTRICT buf)
 /* buf must be TIMESTAMP_SIZE */
 {
 	struct timeval t;
@@ -223,7 +233,7 @@ sprint_time(char* RESTRICT buf)
 }
 
 INLINE void
-mkprefix(const unsigned char flags, const int fd, char* RESTRICT prefixbuf)
+mkprefix(const unsigned char flags, const int fd, char *RESTRICT prefixbuf)
 /* Based on flags and fd, writes a prefix to prefixbuf that should prefix
  * each buffalo in buffalo, eg. `[21:34:56.135429]&1 ' */
 {
@@ -247,12 +257,12 @@ mkprefix(const unsigned char flags, const int fd, char* RESTRICT prefixbuf)
 /* TODO: the two prepend_lines functions need to be merged properly */
 
 INLINE void
-prepend_lines(FILE* RESTRICT outstream, const char* RESTRICT prefixstr,
-		const char* unprinted, size_t n_unprinted)
-		      /*  ^ can't be RESTRICTed because it's aliased
+prepend_lines(FILE *RESTRICT outstream, const char *RESTRICT prefixstr,
+		const char * unprinted, size_t n_unprinted)
+		      /*   ^ can't be RESTRICTed because it's aliased
 		       * in the function body by newline_ptr */
 {
-	const char* newline_ptr = unprinted;
+	const char * newline_ptr = unprinted;
 
 	/* Look for a newline anywhere but the last char */
 	while ((newline_ptr = memchr(unprinted, '\n', n_unprinted - 1))) {
@@ -270,10 +280,10 @@ prepend_lines(FILE* RESTRICT outstream, const char* RESTRICT prefixstr,
 
 #ifdef WITH_CURSES
 int /* int for waddnstr(3X) compatibility */
-prepend_lines_curses(WINDOW* RESTRICT w, const curs_char_t* unprinted,
+prepend_lines_curses(WINDOW *RESTRICT w, const curs_char_t * unprinted,
 		int /*waddnstr(3X) again*/ n_unprinted)
 {
-	const curs_char_t* newline_ptr = unprinted;
+	const curs_char_t * newline_ptr = unprinted;
 	char prefixstr[TIMESTAMP_SIZE];
 
 	sprint_time(prefixstr);
@@ -303,7 +313,7 @@ prepend_lines_curses(WINDOW* RESTRICT w, const curs_char_t* unprinted,
 #endif /* with curses */
 
 #define CAT_IN_TECHNICOLOUR(a)\
-	bool a(const int ifd, void* output_target, const unsigned char flags)
+	bool a(const int ifd, void * output_target, const unsigned char flags)
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
@@ -312,7 +322,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 {
 	ssize_t nread;
 	char prefixstr[TIMESTAMP_SIZE + 3], buf[BUFSIZ];
-	FILE* RESTRICT outstream;
+	FILE *RESTRICT outstream;
 	const int fd = *(int*)output_target;
 	bool ret = true;
 
@@ -323,7 +333,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	 *
 	 * Also, writers of code readability guidelines are fannies */
 
-	const char* RESTRICT colour =
+	const char *RESTRICT colour =
 		(flags & FLAG_COLOUR)
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
@@ -363,7 +373,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 {
 	const int fd = *(int*)output_target;
 	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : fd;
-	const char* RESTRICT colour =
+	const char *RESTRICT colour =
 		(flags & FLAG_COLOUR)
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
@@ -397,7 +407,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 /* This one outputs to WINDOW* objects */
 {
-	WINDOW* w = (WINDOW*)output_target;
+	WINDOW * w = (WINDOW*)output_target;
 	ssize_t nread;
 	char buf[BUFSIZ];
 	int (*out_)(WINDOW*, const curs_char_t*, int) =
@@ -420,7 +430,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 # ifdef WITH_CURSES_WIDE
 			buf[nread] = '\0'; /* Hence BUFSIZ - 1 above */
 			{
-				const char* ptr = buf;
+				const char * ptr = buf;
 				wchar_t wbuf[BUFSIZ];
 				const size_t fet =
 					mbsrtowcs(wbuf, &ptr, BUFSIZ, NULL);
@@ -438,7 +448,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 }
 
 void
-set_up_ncurses_window(WINDOW* RESTRICT w, const short colour_pair,
+set_up_ncurses_window(WINDOW *RESTRICT w, const short colour_pair,
 		const char vertical_line)
 {
 	idlok(w, true);
@@ -453,7 +463,7 @@ set_up_ncurses_window(WINDOW* RESTRICT w, const short colour_pair,
 }
 
 INLINE void
-set_up_ncurses(WINDOW* RESTRICT* window)
+set_up_ncurses(WINDOW *RESTRICT* window)
 /* window must be an array of exactly two WINDOW pointers */
 {
 	char vertical_line; /* used later in box(3X) */
@@ -511,7 +521,7 @@ parent_listen(const int child_out, const int child_err,
 	unsigned char watch = STDOUT_FILENO | STDERR_FILENO;
 
 	/* ugly stuff for C ```polymorphism''' */
-	void* out_target, * err_target;
+	void * out_target, * err_target;
 	/* These could and probably should be const, but passing a void* to
 	 * them makes that feel kinda dishonest, and also the compiler gets
 	 * up my ass for it, so have a static to make up for it */
@@ -519,7 +529,7 @@ parent_listen(const int child_out, const int child_err,
 
 	/* Beware: cute preprocessor shit */
 #ifdef WITH_CURSES
-	WINDOW* RESTRICT w[2];
+	WINDOW *RESTRICT w[2];
 	if (flags & FLAG_CURSES) {
 		set_up_ncurses(w);
 		out_target = w[0], err_target = w[1];
@@ -567,7 +577,7 @@ parent_listen(const int child_out, const int child_err,
 }
 
 INLINE int
-parent_wait_for_child(const char* RESTRICT child, const unsigned char flags)
+parent_wait_for_child(const char *RESTRICT child, const unsigned char flags)
 /* Clean up after child (common parenting experience). Returns $? */
 {
 	int child_ret;
@@ -601,11 +611,10 @@ parent_wait_for_child(const char* RESTRICT child, const unsigned char flags)
 	}
 }
 
-unsigned char
-process_cmdline(const int argc, char* const argv[])
-/* Returns flags */
+void
+usage(const char *RESTRICT progname)
 {
-	const char help[] = "\
+	static const char help[] = "\
 Usage: %s [OPT(s)] PROG [PROGARG(s)]\n\
 Runs PROG with PROGARG(s) if any, and marks which of the output is stdout\n\
 and which is stderr. Returns PROG's exit status\n\
@@ -631,8 +640,42 @@ Options:\n\
 	-v	Verbose -- print more\n\
 	-h	Print this help\n";
 
-	static const char* RESTRICT optstr = "+12A:CPchpqtv"
-	/* The + at the beginning is for GNU  ^ getopt(3), to let us pass
+	printf(help, progname);
+	exit(EXIT_SUCCESS);
+}
+
+void
+version(void)
+{
+	char verspiel[] = "ssss version 0.1, built " __DATE__
+#ifdef WITH_CURSES
+		", with the -S extension with"
+# ifndef WITH_CURSES_WIDE
+		"out"
+# endif
+		" UTF-8 support"
+#endif
+		"\n" SPIEL;
+
+#if 1
+	printf("%s\n\n_POSIX_C_SOURCE=%ld\n_XOPEN_SOURCE=%d\n_GNU_SOURCE "
+# ifndef _GNU_SOURCE
+		"un"
+# endif
+		"defined\n", verspiel, (long)_POSIX_C_SOURCE, _XOPEN_SOURCE);
+#else
+	puts(verspiel);
+#endif
+
+	exit(EXIT_SUCCESS);
+}
+
+unsigned char
+process_cmdline(const int argc, char *const argv[])
+/* Returns flags */
+{
+	static const char optstr[] = "+12A:CPVchpqtv"
+	/* The + at the beginning is  ^ for GNU getopt(3), to let us pass
 	 * options to PROG (else it permutes them away to us)
 	 *
 	 * Note also lack of semicolon, that's to faciliate this: */
@@ -644,11 +687,11 @@ Options:\n\
 	unsigned char flags = 0;
 	enum { ON, OFF, AUTO } colour = AUTO, prefix = AUTO;
 
-	/* hacky support for --help */
-	if (argv[1] && strcmp(argv[1], "--help") == 0) {
-		printf(help, argv[0]);
-		exit(EXIT_SUCCESS);
-	}
+	/* hacky support for --help and --version */
+	if (argv[1] && strcmp(argv[1], "--help") == 0)
+		usage(argv[0]);
+	if (argv[1] && strcmp(argv[1], "--version") == 0)
+		version();
 
 	for (;;) {
 		const int o = getopt(argc, argv, optstr);
@@ -669,8 +712,9 @@ Options:\n\
 #ifdef WITH_CURSES
 		case 'S':	flags |= FLAG_CURSES; break;
 #endif
+		case 'V':	version();
 		case 'c':	colour = ON;  break;
-		case 'h':	printf(help, argv[0]); exit(EXIT_SUCCESS);
+		case 'h':	usage(argv[0]);
 		case 'p':	prefix = ON;  break;
 		case 'q':	flags |= FLAG_QUIET; break;
 		case 't': 	flags |= FLAG_TIMESTAMPS; break;
@@ -695,8 +739,8 @@ Options:\n\
 #ifdef WITH_CURSES
 	if (flags & FLAG_CURSES) {
 		/* quarter-arsed attempt to warn the user for options that
-		 * conflict with -c */
-		const char optwarning[] = "-%c is ignored when -c is specified";
+		 * conflict with -S */
+		const char optwarning[] = "-%c is ignored when -S is specified";
 		if (flags & FLAG_ALLINONE)
 			warnx(optwarning, '1');
 		switch (prefix) {
@@ -782,8 +826,8 @@ setup_handle_bad_prog(void)
 }
 
 INLINE void
-child_prepare(const char* RESTRICT cmd, const unsigned char flags,
-		int* RESTRICT child_stdout, int* RESTRICT child_stderr)
+child_prepare(const char *RESTRICT cmd, const unsigned char flags,
+		int *RESTRICT child_stdout, int *RESTRICT child_stderr)
 /* int pointers are to arrays of exactly 2 ints */
 {
 	/* Close read ends, we're reading from the child so the
@@ -810,8 +854,8 @@ child_prepare(const char* RESTRICT cmd, const unsigned char flags,
 }
 
 INLINE void
-parent_prepare(const unsigned char flags, int* RESTRICT child_stdout,
-		int* RESTRICT child_stderr)
+parent_prepare(const unsigned char flags, int *RESTRICT child_stdout,
+		int *RESTRICT child_stderr)
 /* int pointers are to arrays of exactly 2 ints */
 {
 	/* Inverse of the child process' close(2) calls */
@@ -849,7 +893,7 @@ parent_prepare(const unsigned char flags, int* RESTRICT child_stdout,
 }
 
 int
-main(const int argc, char* const argv[])
+main(const int argc, char *const argv[])
 {
 	const unsigned char flags = process_cmdline(argc, argv);
 	int child_stdout[2], child_stderr[2];
