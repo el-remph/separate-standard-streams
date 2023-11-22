@@ -1,7 +1,7 @@
 # make WITH_CURSES=1 to enable -S (bit shit, you have been warned)
 #
-# Configurable options: WITH_CURSES DEBUG OPTIMISATION CSTANDARD CWARNINGS,
-# as well as the usual CC CPPFLAGS CFLAGS LDFLAGS. So:
+# Configurable options: WITH_CURSES WITHOUT_UNICODE DEBUG ASM OPTIMISATION
+# CSTANDARD CWARNINGS, as well as the usual CC CPPFLAGS CFLAGS LDFLAGS. So:
 # 	$ make OPTIMISATION='-Ofast -march=native -mtune=native' CSTANDARD=-std=gnu89 CWARNINGS=-War
 #	cc -pipe -fwhole-program -Ofast -march=native -mtune=native -std=gnu89 -War ssss.c -o ssss
 # 	$ make CFLAGS='-Ofast -march=native -mtune=native -std=gnu89 -War'
@@ -60,24 +60,26 @@ else
 	LDFLAGS      += -s
 endif
 
-CFLAGS?=-pipe -fwhole-program $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
+CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
 
 
 .PHONY = all clean
 
 all: ssss
 
-# `make DEBUG=1' leaves assembly droppings, so you can diff ssss.s against
+# `make ASM=1' leaves assembly droppings, so you can diff ssss.s against
 # its younger counterpart and see if it's lost any weight. Also cause I like
 # the filename ssss.s
 
-ssss: ssss.c
-ifdef DEBUG
-	$(CC) $(CPPFLAGS) $(CFLAGS) -S ssss.c
-	$(CC) $(LDFLAGS) ssss.s -o ssss
+ssss: ssss.c compat__attribute__.h
+ifdef ASM
+	$(CC) $(CPPFLAGS) $(CFLAGS) -S $<
+	$(CC) $(LDFLAGS) $@.s -o $@
 else
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) ssss.c -o ssss
-	strip ssss
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< -o $@
+endif
+ifndef DEBUG
+	strip $@
 endif
 
 clean:

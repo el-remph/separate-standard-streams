@@ -1,13 +1,17 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #define SPIEL "\
 ssss -- split standard streams: highlight the stdout and stderr of a process\n\
 Copyright 2023 the Remph\n\n\
-This is free software under the GNU General Public Licence, version 3 or\n\
-later. For more information, see the GNU GPL, attached in the file `GPL' and\n\
-available at https://gnu.org/licenses/gpl"
+This is free software; permission is given to copy and/or distribute it,\n\
+with or without modification, under the terms of the GNU General Public\n\
+Licence, version 3 or later. For more information, see the GNU GPL, found\n\
+distributed with this in the file `GPL', and at https://gnu.org/licenses/gpl"
 
-/* static __inline__ foo(const unsigned char *__restrict__ bar), and such
- * or INLINE foo(const unsigned char *RESTRICT bar)
- * might have gone a bit heavy on that stuff is what I'm saying
+#if 0
+static __inline__ void __attribute__((noreturn, nonnull))
+foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
+#endif
+/* might have gone a bit heavy on that stuff, is what I'm saying
  *
  * This program outputs into either unix file descriptors, stdio FILE*
  * streams, or curses WINDOW* objects, depending on the options it's called
@@ -174,7 +178,6 @@ typedef char curs_char_t;
 #  define true 1
 #  define false 0
 # else /* Neither -std=c99 nor -std=gnu89 */
-#  define INLINE
 typedef enum { false = 0, true = 1 } bool;
 # endif /* -std=c99 or -std=gnu89 */
 
@@ -193,11 +196,13 @@ typedef enum { false = 0, true = 1 } bool;
 #endif
 
 /* Take advantage of features where available */
+#include "compat__attribute__.h" /* This must always be the last #include */
+
 #if __STDC_VERSION__ >= 199901L
-# define INLINE static inline
+# define INLINE inline
 # define RESTRICT restrict
 #elif (defined(__GNUC__) && !defined(__STRICT_ANSI__))
-# define INLINE static __inline__
+# define INLINE __inline__
 # define RESTRICT __restrict__
 #else /* Neither -std=c99 nor -std=gnu89 */
 # define INLINE
@@ -206,7 +211,11 @@ typedef enum { false = 0, true = 1 } bool;
 
 /* Flag constants -- used to be macros, but it's useful to have them typed
  * just in case */
+#if __STDC_VERSION__ >= 202300L
+enum : unsigned char {
+#else
 const unsigned char
+#endif /* C23 */
 	FLAG_ALLINONE	= 1 << 0,
 	FLAG_TIMESTAMPS	= 1 << 1,
 	FLAG_COLOUR	= 1 << 2,
@@ -215,12 +224,15 @@ const unsigned char
 	FLAG_QUIET	= 1 << 5
 #ifdef WITH_CURSES
 	,FLAG_CURSES	= 1 << 6
-#endif
+#endif /* with curses */
+#if __STDC_VERSION__ >= 202300L
+}
+#endif /* C23 */
 	;
 
 #define TIMESTAMP_SIZE (sizeof "[00:00:00.000000] ")
 
-void
+static void __attribute__((nonnull))
 sprint_time(char *RESTRICT buf)
 /* buf must be TIMESTAMP_SIZE */
 {
@@ -232,7 +244,7 @@ sprint_time(char *RESTRICT buf)
 		".%06ld] ", t.tv_usec);
 }
 
-INLINE void
+static INLINE void __attribute__((nonnull))
 mkprefix(const unsigned char flags, const int fd, char *RESTRICT prefixbuf)
 /* Based on flags and fd, writes a prefix to prefixbuf that should prefix
  * each buffalo in buffalo, eg. `[21:34:56.135429]&1 ' */
@@ -256,11 +268,12 @@ mkprefix(const unsigned char flags, const int fd, char *RESTRICT prefixbuf)
 
 /* TODO: the two prepend_lines functions need to be merged properly */
 
-INLINE void
+static INLINE void __attribute__((nonnull))
 prepend_lines(FILE *RESTRICT outstream, const char *RESTRICT prefixstr,
-		const char * unprinted, size_t n_unprinted)
-		      /*   ^ can't be RESTRICTed because it's aliased
-		       * in the function body by newline_ptr */
+		const char * unprinted __attribute__((nonstring)),
+		/* can't be^RESTRICTed because it's aliased in the function
+		 * body by newline_ptr */
+		size_t n_unprinted)
 {
 	const char * newline_ptr = unprinted;
 
@@ -279,7 +292,7 @@ prepend_lines(FILE *RESTRICT outstream, const char *RESTRICT prefixstr,
 }
 
 #ifdef WITH_CURSES
-int /* int for waddnstr(3X) compatibility */
+static int /* int for waddnstr(3X) compatibility */ __attribute__((nonnull))
 prepend_lines_curses(WINDOW *RESTRICT w, const curs_char_t * unprinted,
 		int /*waddnstr(3X) again*/ n_unprinted)
 {
@@ -317,11 +330,13 @@ prepend_lines_curses(WINDOW *RESTRICT w, const curs_char_t * unprinted,
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
+static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 /* This one outputs to FILE* streams */
 {
 	ssize_t nread;
-	char prefixstr[TIMESTAMP_SIZE + 3], buf[BUFSIZ];
+	char prefixstr[TIMESTAMP_SIZE + 3];
+	char buf[BUFSIZ] __attribute__((nonstring));
 	FILE *RESTRICT outstream;
 	const int fd = *(int*)output_target;
 	bool ret = true;
@@ -368,6 +383,7 @@ end:
 	return ret;
 }
 
+static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 /* This one outputs to unix file descriptors */
 {
@@ -378,7 +394,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
 	size_t prefixn = *colour ? 5 : 0;
-	char buf[BUFSIZ];
+	char buf[BUFSIZ] __attribute__((nonstring));
 	ssize_t nread;
 
 	if (prefixn) memcpy(buf, colour, prefixn);
@@ -404,6 +420,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 }
 
 #ifdef WITH_CURSES
+static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 /* This one outputs to WINDOW* objects */
 {
@@ -447,7 +464,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 	return true;
 }
 
-void
+static void __attribute__((nonnull))
 set_up_ncurses_window(WINDOW *RESTRICT w, const short colour_pair,
 		const char vertical_line)
 {
@@ -462,8 +479,8 @@ set_up_ncurses_window(WINDOW *RESTRICT w, const short colour_pair,
 	leaveok(w, true); /* No more need for the cursor */
 }
 
-INLINE void
-set_up_ncurses(WINDOW *RESTRICT* window)
+static INLINE void __attribute__((nonnull))
+set_up_ncurses(WINDOW *RESTRICT *RESTRICT window)
 /* window must be an array of exactly two WINDOW pointers */
 {
 	char vertical_line; /* used later in box(3X) */
@@ -498,7 +515,7 @@ set_up_ncurses(WINDOW *RESTRICT* window)
 }
 #endif /* with curses */
 
-INLINE void
+static INLINE void
 parent_listen(const int child_out, const int child_err,
 		const unsigned char flags)
 {
@@ -576,7 +593,7 @@ parent_listen(const int child_out, const int child_err,
 	} while (watch);
 }
 
-INLINE int
+static INLINE int __attribute__((nonnull))
 parent_wait_for_child(const char *RESTRICT child, const unsigned char flags)
 /* Clean up after child (common parenting experience). Returns $? */
 {
@@ -611,7 +628,7 @@ parent_wait_for_child(const char *RESTRICT child, const unsigned char flags)
 	}
 }
 
-void
+static void __attribute__((noreturn))
 usage(const char *RESTRICT progname)
 {
 	static const char help[] = "\
@@ -644,7 +661,7 @@ Options:\n\
 	exit(EXIT_SUCCESS);
 }
 
-void
+static void __attribute__((noreturn))
 version(void)
 {
 	char verspiel[] = "ssss version 0.1, built " __DATE__
@@ -657,7 +674,7 @@ version(void)
 #endif
 		"\n" SPIEL;
 
-#if 1
+#if 1 /* The artist formerly known as #ifdef DEBUG_MACROS */
 	printf("%s\n\n_POSIX_C_SOURCE=%ld\n_XOPEN_SOURCE=%d\n_GNU_SOURCE "
 # ifndef _GNU_SOURCE
 		"un"
@@ -670,7 +687,7 @@ version(void)
 	exit(EXIT_SUCCESS);
 }
 
-unsigned char
+static unsigned char
 process_cmdline(const int argc, char *const argv[])
 /* Returns flags */
 {
@@ -763,12 +780,14 @@ process_cmdline(const int argc, char *const argv[])
 	 * just tune em out. Anyway, come get a load of this shit, it'll
 	 * blow your fuckin mind, man
 	 *
-	 * WHAT THE FUCK HAVE I GOT TO DO TO GET THE COMPILER TO SHUT THE
-	 * FUCK UP ABOUT THIS? */
+	 * I'm so fucking far ahead, man, I'm pretty sure the compiler
+	 * literally cannot understand this, it needs at least a null
+	 * statement just to begin to understand this kind of shit but
+	 * *there is no null statement*, that's the fucking point! I'm going
+	 * places the compiler can't follow! */
 	switch (colour) {
 	case AUTO:
 		if (flags & FLAG_ALLINONE ? isatty(1) : isatty(1) && isatty(2))
-		/*@fallthrough@*/
 	case ON:	flags |= FLAG_COLOUR;
 		else
 	case OFF:	flags &= ~FLAG_COLOUR;
@@ -776,7 +795,6 @@ process_cmdline(const int argc, char *const argv[])
 	switch (prefix) {
 	case AUTO:
 		if (flags & FLAG_COLOUR)
-		/*@fallthrough@*/
 	case OFF:	flags &= ~FLAG_PREFIX;
 		else
 	case ON:	flags |= FLAG_PREFIX;
@@ -785,7 +803,7 @@ process_cmdline(const int argc, char *const argv[])
 	return flags; /* told you so */
 }
 
-void
+static void
 clean_up_colour()
 /* May be called with either (void) by atexit(3) or (int) by sigaction(2).
  * Warning: this function has state (static) */
@@ -798,8 +816,8 @@ clean_up_colour()
 	}
 }
 
-void
-handle_bad_prog()
+static void
+handle_bad_prog(int sig __attribute__((unused)))
 /* signal handler, set up by setup_handle_bad_prog, to see if the child
  * process fails to exec and signals this back to us -- if it does, it will
  * exit with the value of errno after execvp(3) failed */
@@ -814,18 +832,18 @@ handle_bad_prog()
 			piddle);
 }
 
-INLINE void
+static INLINE void
 setup_handle_bad_prog(void)
 {
 	struct sigaction handle_bad_prog_onsig;
 	handle_bad_prog_onsig.sa_handler = handle_bad_prog;
 	handle_bad_prog_onsig.sa_flags = SA_RESETHAND;
 	sigemptyset(&handle_bad_prog_onsig.sa_mask);
-	if (sigaction(SIGUSR1, &handle_bad_prog_onsig, NULL) == -1)
+	if (sigaction(SIGUSR1, &handle_bad_prog_onsig, NULL))
 		warn("sigaction(2)");
 }
 
-INLINE void
+static INLINE void __attribute__((nonnull))
 child_prepare(const char *RESTRICT cmd, const unsigned char flags,
 		int *RESTRICT child_stdout, int *RESTRICT child_stderr)
 /* int pointers are to arrays of exactly 2 ints */
@@ -853,7 +871,7 @@ child_prepare(const char *RESTRICT cmd, const unsigned char flags,
 	dup2(child_stderr[1], STDERR_FILENO);
 }
 
-INLINE void
+static INLINE void __attribute__((nonnull))
 parent_prepare(const unsigned char flags, int *RESTRICT child_stdout,
 		int *RESTRICT child_stderr)
 /* int pointers are to arrays of exactly 2 ints */
@@ -869,7 +887,7 @@ parent_prepare(const unsigned char flags, int *RESTRICT child_stdout,
 		clean_up_colour_onsig.sa_handler = clean_up_colour,
 		clean_up_colour_onsig.sa_flags = SA_RESETHAND;
 		sigemptyset(&clean_up_colour_onsig.sa_mask);
-		if (sigaction(SIGINT, &clean_up_colour_onsig, NULL) == -1)
+		if (sigaction(SIGINT, &clean_up_colour_onsig, NULL))
 			warn("sigaction(2)");
 
 		atexit(clean_up_colour);
