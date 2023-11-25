@@ -223,7 +223,7 @@ typedef enum { false = 0, true = 1 } bool;
  * programs should test both. This tests if this actually necessary */
 #if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
 # define WOULD_BLOCK(e) (e == EWOULDBLOCK | e == EAGAIN)
-/* Bitwise OR is here used in place of its ^ boolean cousin because its
+/* Bitwise OR is here used in place of its^boolean cousin because its
  * operands are true booleans. The two options are optimised to the same
  * assembly output by any modern optimising compiler, but on older
  * compilers this produces very marginally better assembly, so */
@@ -409,21 +409,33 @@ static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 /* This one outputs to unix file descriptors */
 {
+	/* const everything */
 	const int fd = *(int*)output_target;
 	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : fd;
 	const char *RESTRICT colour =
 		(flags & FLAG_COLOUR)
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
-	size_t prefixn = *colour ? 5 : 0;
+
+	/* actual variables we'll be operating on, we need for io */
 	char buf[BUFSIZ] __attribute__((nonstring));
 	ssize_t nread;
 
-	if (prefixn) memcpy(buf, colour, prefixn);
+	if (*colour) {
+		const size_t prefixn = 5; /* strlen(colour) */
+		memcpy(buf, colour, prefixn);
+		/* First read will be a special case, reading into buf
+		 * starting after the prefix */
+		nread = read(ifd, buf + prefixn, BUFSIZ - prefixn);
+		if (nread > 0) nread += prefixn;
+		goto test_nread; /* Jump into the loop after the read,
+		* having done the special-case first read; subsequent
+		* iterations of the loop will do the regular first read */
+	}
 
 	do {
-		/* Reads into buf starting after the prefix, if any */
-		nread = read(ifd, buf + prefixn, BUFSIZ - prefixn);
+		nread = read(ifd, buf, BUFSIZ);
+test_nread:
 		switch (nread) {
 			case -1:
 			if (WOULD_BLOCK(errno))
@@ -432,10 +444,8 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 				err(-1, "read(2)");
 
 			case  0: close(ifd); return false;
-			default: write(ofd, buf, nread + prefixn);
+			default: write(ofd, buf, nread);
 		}
-		if (prefixn) prefixn = 0; /* Any iterations after the first
-		* will overwrite the prefix in buf on read(2) */
 	} while (nread == BUFSIZ);
 
 	return true;
