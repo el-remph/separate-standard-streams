@@ -8,10 +8,10 @@ Licence, version 3 or later. For more information, see the GNU GPL, found\n\
 distributed with this in the file `GPL', and at https://gnu.org/licenses/gpl"
 
 #if 0
-static __inline__ void __attribute__((noreturn, nonnull))
+static __inline__ void __attribute__((__noreturn__, nonnull))
 foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #endif
-/* might have gone a bit heavy on that stuff, is what I'm saying
+/* ^ might have gone a bit heavy on that stuff, is what I'm saying
  *
  * This program outputs into either unix file descriptors, stdio FILE*
  * streams, or curses WINDOW* objects, depending on the options it's called
@@ -40,8 +40,7 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  *  then call waddnstr(3X). That minimises calls to waddnstr(3X) but it's
  *  still one pass too many. Could make an option like -0 to `not break
  *  when input containing embedded NULs is passed,' but what the fuck is
- *  the use case for that?
- ** Strictly speaking you're meant to test for both EAGAIN and EWOULDBLOCK */
+ *  the use case for that? */
 
 /* feature_test_macros(7):
  ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
@@ -98,6 +97,7 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
 #include <signal.h>	/* sigaction(2), kill(2), sys_siglist[] if we can't
 			 * get strsignal(3) */
+
 #ifdef DEBUG_MACROS
 /* provide a consistent lowest-common-denominator environment */
 # undef _BSD_SOURCE
@@ -196,6 +196,7 @@ typedef enum { false = 0, true = 1 } bool;
 #endif
 
 /* Take advantage of features where available */
+
 #include "compat__attribute__.h" /* This must always be the last #include */
 
 #if __STDC_VERSION__ >= 199901L
@@ -208,6 +209,27 @@ typedef enum { false = 0, true = 1 } bool;
 # define INLINE
 # define RESTRICT
 #endif /* -std=c99 or -std=gnu89 */
+
+#if __STDC_VERSION__ >= 201100L
+# include <stdnoreturn.h>
+#else
+# define noreturn __attribute__((__noreturn__))
+/* Beware using noreturn in functions with other __attribute__s */
+#endif
+
+/* An oversight in POSIX: if an IO function fails due to O_NONBLOCK, errno
+ * could be either EAGAIN or EWOULDBLOCK, and they may be different values.
+ * In practice, this is rarely if ever the case, but truly POSIXLY_CORRECT
+ * programs should test both. This tests if this actually necessary */
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+# define WOULD_BLOCK(e) (e == EWOULDBLOCK | e == EAGAIN)
+/* Bitwise OR is here used in place of its ^ boolean cousin because its
+ * operands are true booleans. The two options are optimised to the same
+ * assembly output by any modern optimising compiler, but on older
+ * compilers this produces very marginally better assembly, so */
+#else
+# define WOULD_BLOCK(e) (e == EAGAIN)
+#endif
 
 /* Flag constants -- used to be macros, but it's useful to have them typed
  * just in case */
@@ -367,7 +389,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 		nread = read(ifd, buf, BUFSIZ);
 		switch (nread) {
 			case -1:
-				if (errno == EAGAIN)
+				if (WOULD_BLOCK(errno))
 					goto end;
 				else
 					err(-1, "read(2)");
@@ -404,7 +426,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 		nread = read(ifd, buf + prefixn, BUFSIZ - prefixn);
 		switch (nread) {
 			case -1:
-			if (errno == EAGAIN)
+			if (WOULD_BLOCK(errno))
 				return true;
 			else
 				err(-1, "read(2)");
@@ -438,7 +460,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 		);
 		switch (nread) {
 			case -1:
-			if (errno == EAGAIN)
+			if (WOULD_BLOCK(errno))
 				return true;
 			else
 				err(-1, "read(2)");
@@ -628,7 +650,7 @@ parent_wait_for_child(const char *RESTRICT child, const unsigned char flags)
 	}
 }
 
-static void __attribute__((noreturn))
+noreturn static void
 usage(const char *RESTRICT progname)
 {
 	static const char help[] = "\
@@ -655,13 +677,14 @@ Options:\n\
 	-q	Quiet -- don't print anything of our own, just get busy\n\
 		transforming the output of PROG\n\
 	-v	Verbose -- print more\n\
-	-h	Print this help\n";
+	--help, -h	Print this help\n\
+	--version, -V	Print version information\n";
 
 	printf(help, progname);
 	exit(EXIT_SUCCESS);
 }
 
-static void __attribute__((noreturn))
+noreturn static void
 version(void)
 {
 	char verspiel[] = "ssss version 0.1, built " __DATE__
@@ -705,10 +728,13 @@ process_cmdline(const int argc, char *const argv[])
 	enum { ON, OFF, AUTO } colour = AUTO, prefix = AUTO;
 
 	/* hacky support for --help and --version */
-	if (argv[1] && strcmp(argv[1], "--help") == 0)
-		usage(argv[0]);
-	if (argv[1] && strcmp(argv[1], "--version") == 0)
-		version();
+	if (argv[1] && argv[1][0] == '-') {
+		const char * longname = argv[1] + 1 + !!(argv[1][1] == '-');
+		if (strcmp(longname, "help") == 0)
+			usage(argv[0]);
+		if (strcmp(longname, "version") == 0)
+			version();
+	}
 
 	for (;;) {
 		const int o = getopt(argc, argv, optstr);
@@ -762,13 +788,13 @@ process_cmdline(const int argc, char *const argv[])
 			warnx(optwarning, '1');
 		switch (prefix) {
 			case AUTO: break; /* no worries */
-			case OFF:  warnx(optwarning, 'p'); break;
-			case ON:   warnx(optwarning, 'P'); break;
+			case OFF:  warnx(optwarning, 'P'); break;
+			case ON:   warnx(optwarning, 'p'); break;
 		}
 		switch (colour) {
 			case AUTO: break; /* no worries */
-			case OFF:  warnx(optwarning, 'c'); break;
-			case ON:   warnx(optwarning, 'C'); break;
+			case OFF:  warnx(optwarning, 'C'); break;
+			case ON:   warnx(optwarning, 'c'); break;
 		}
 
 		return flags; /* No need to work on -p or -c */
