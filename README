@@ -11,9 +11,10 @@ but hopefully less mank.
 
 To build, run `make'. There is an extra, WIP feature, printing stdout and
 stderr side-by-side, which requires curses, and can be enabled with
-`make WITH_CURSES=1'. This also requires libcursesw and C99 for Unicode
-support; in the unlikely event that you are missing either of those, Unicode
-support can be disabled with `make WITH_CURSES=1 WITHOUT_UNICODE=1'.
+`make WITH_CURSES=1'. This also requires libcursesw (or just libcurses if
+you're using netbsd-curses) and C99 for Unicode support; in the unlikely
+event that you are missing either of those, Unicode support can be disabled
+with `make WITH_CURSES=1 WITHOUT_UNICODE=1'.
 
 It sticks to low-level Unix functions, and is written in ANSI C; mostly
 requires only POSIX 1993 (with a couple widely available exceptions
@@ -21,9 +22,8 @@ described in the source) and could hypothetically probably maybe compile on
 4.3BSD, although I haven't tested that and wouldn't want to. It should
 almost certainly compile and run fine on any Unix-like system (except maybe
 some pure SysV derivatives like HP-UX or IBM AIX, if that's still around).
-The build WITH_CURSES is tested on GNU ncurses which is ubiquitous; X/Open
-and prehistoric curses should work, although where one might find a
-non-ncurses curses I have no idea.
+The build WITH_CURSES is tested on GNU ncurses and netbsd-curses, although
+it's pretty sketchy on the latter
 
 For usage, run it with -h. For more information about system compatibility
 and dependencies, see the section of the source (near the top) about
@@ -54,4 +54,5 @@ BUGS:
   did try it, funnily enough, and still have the remains of that code so
   maybe some comparative testing is what's needed
 - The curses thing is a WIP: it cuts off your scrollback buffer when really
-  it should *use* it, and it can't handle input with embedded NUL chars
+  it should *use* it, and it can't handle input with embedded NUL chars. The
+  former may be provisionally fixed on ncurses, but not netbsd-curses

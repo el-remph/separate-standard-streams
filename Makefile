@@ -7,9 +7,9 @@
 # 	$ make CFLAGS='-Ofast -march=native -mtune=native -std=gnu89 -War'
 #	cc -Ofast -march=native -mtune=native -std=gnu89 -War ssss.c -o ssss
 #
-# This compiles with pcc, but I haven't been able to link it with pcc on
-# GNU. gcc and clang can both link the object code produced by pcc, although
-# that rather misses the point:
+# This compiles with pcc and tcc, but seems like they haven't got the hang
+# of ld(1). Them and me both lol. gcc and clang can both link the object
+# code produced by pcc, although that rather misses the point:
 #
 #	pcc -O1 -c ssss.c
 #	gcc -s ssss.o -o ssss
@@ -17,10 +17,10 @@
 #
 # Or for a debug build:
 #
-#	pcc -O0 -g -c ssss.c
+#	tcc -g -c ssss.c
 #	gcc ssss.o -o ssss
 #
-# Sometimes it needs GNU cpp also. Don't forget to pass whatever -std you're
+# Sometimes pcc needs GNU cpp also. Don't forget to pass whatever -std you're
 # using to both:
 #	# Preprocess (.c -> .i):
 #	cpp -std=c99 -DWITH_CURSES -DDEBUG_MACROS ssss.c > ssss.i
@@ -37,27 +37,27 @@ CWARNINGS ?=-Wall -Wextra -Wno-implicit-fallthrough -Wno-overlength-strings -Wno
 # -Wno-cpp is for glibc's features.h bloody whining about bloody _BSD_SOURCE
 
 ifdef WITH_CURSES
-	CPPFLAGS += -DWITH_CURSES
+        CPPFLAGS += -DWITH_CURSES
     ifdef WITHOUT_UNICODE
-	LDFLAGS  += -lcurses
+        CURSLIBS ?=-lcurses -ltinfo
     else
-	CSTANDARD?=-std=c99
-	CPPFLAGS += -DWITH_CURSES_WIDE
-	LDFLAGS  += -lcursesw
+        CPPFLAGS += -DWITH_CURSES_WIDE
+        CURSLIBS ?=-lcursesw -ltinfo
     endif
+    LDFLAGS +=$(CURSLIBS)
 endif
 
 ifdef DEBUG
-	# a dev build
-	CPPFLAGS     += -DDEBUG_MACROS
-	CWARNINGS    += -Winline
-	CSTANDARD    ?=-ansi -pedantic
-	OPTIMISATION ?=-Og -ggdb3
+        # a dev build
+        CPPFLAGS     += -DDEBUG_MACROS
+        CWARNINGS    += -Winline
+        CSTANDARD    ?=-ansi -pedantic
+        OPTIMISATION ?=-Og -ggdb3
 else
-	# Proper build -- don't define CSTANDARD (unless the user does on
-	# the command line), let the compiler use everything it's got
-	OPTIMISATION ?=-O2 -march=native -mtune=native
-	LDFLAGS      += -s
+        # Proper build -- don't define CSTANDARD (unless the user does on
+        # the command line), let the compiler use everything it's got
+        OPTIMISATION ?=-O2 -march=native -mtune=native
+        LDFLAGS      += -s
 endif
 
 CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)

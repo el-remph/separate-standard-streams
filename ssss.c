@@ -149,14 +149,14 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #  define NCURSES_WIDECHAR 1
 #  define _XOPEN_SOURCE_EXTENDED
 #  define WADDNSTR waddnwstr
-typedef wchar_t curs_char_t;
+typedef wchar_t curs_char_T;
 # else
 #  define WADDNSTR waddnstr
-typedef char curs_char_t;
+typedef char curs_char_T;
 # endif /* with wide curses */
 
 # include <curses.h>
-# include <term.h>
+# include <term.h> /* putp(3X) and *_ca_mode used in set_up_curses */
 
 /* Just make sure that true and false are definitely defined, since curses
  * only guarantees us TRUE and FALSE, but may also provide true and false
@@ -183,6 +183,8 @@ typedef enum { false = 0, true = 1 } bool;
 
 #endif /* with curses */
 
+#include "compat__attribute__.h" /* This must always be the last #include */
+
 /* In case some macros aren't defined in those headers, on very old systems */
 #ifndef SA_RESETHAND
 #define SA_RESETHAND 0 /* ): */
@@ -197,7 +199,6 @@ typedef enum { false = 0, true = 1 } bool;
 
 /* Take advantage of features where available */
 
-#include "compat__attribute__.h" /* This must always be the last #include */
 
 #if __STDC_VERSION__ >= 199901L
 # define INLINE inline
@@ -315,10 +316,10 @@ prepend_lines(FILE *RESTRICT outstream, const char *RESTRICT prefixstr,
 
 #ifdef WITH_CURSES
 static int /* int for waddnstr(3X) compatibility */ __attribute__((nonnull))
-prepend_lines_curses(WINDOW *RESTRICT w, const curs_char_t * unprinted,
+prepend_lines_curses(WINDOW *RESTRICT w, const curs_char_T * unprinted,
 		int /*waddnstr(3X) again*/ n_unprinted)
 {
-	const curs_char_t * newline_ptr = unprinted;
+	const curs_char_T * newline_ptr = unprinted;
 	char prefixstr[TIMESTAMP_SIZE];
 
 	sprint_time(prefixstr);
@@ -435,8 +436,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 
 	do {
 		nread = read(ifd, buf, BUFSIZ);
-test_nread:
-		switch (nread) {
+test_nread:	switch (nread) {
 			case -1:
 			if (WOULD_BLOCK(errno))
 				return true;
@@ -458,9 +458,15 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 {
 	WINDOW * w = (WINDOW*)output_target;
 	ssize_t nread;
-	char buf[BUFSIZ];
-	int (*out_)(WINDOW*, const curs_char_t*, int) =
+	int (*out_)(WINDOW*, const curs_char_T*, int) =
 		(flags & FLAG_TIMESTAMPS) ? prepend_lines_curses : WADDNSTR;
+
+# ifndef WITH_CURSES_WIDE
+	/* If we're WIDE then buf is passed to mbsrtowcs(3), so must be
+	 * ASCIZ; else goes straight out_() */
+	__attribute__((nonstring))
+# endif
+	char buf[BUFSIZ];
 
 	do {
 		nread = read(ifd, buf, BUFSIZ
@@ -497,14 +503,16 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 }
 
 static void __attribute__((nonnull))
-set_up_ncurses_window(WINDOW *RESTRICT w, const short colour_pair,
-		const char vertical_line)
+set_up_curses_window(WINDOW *RESTRICT w, const short colour_pair)
 {
 	idlok(w, true);
-	idcok(w, true);
 	scrollok(w, true);
-	wcolor_set(w, colour_pair, NULL);
-	box(w, vertical_line, 0);
+
+	/* 0 as a colour pair is special to curses and would be a noop
+	 * here, so it's used to signify colour unavailability */
+	if (colour_pair)
+		wcolor_set(w, colour_pair, NULL);
+
 	/* wmove(3X) the cursor to the bottom of the window, to write lines
 	 * from the bottom up */
 	wmove(w, LINES - 1, 0);
@@ -512,24 +520,21 @@ set_up_ncurses_window(WINDOW *RESTRICT w, const short colour_pair,
 }
 
 static INLINE void __attribute__((nonnull))
-set_up_ncurses(WINDOW *RESTRICT *RESTRICT window)
+set_up_curses(WINDOW *RESTRICT *RESTRICT window)
 /* window must be an array of exactly two WINDOW pointers */
 {
-	char vertical_line; /* used later in box(3X) */
-
 	/* just a cast to shut up the compiler */
 	atexit((void (*)(void))endwin);
 
 	initscr();
-	/* deal with silly curses default */
-	if ((vertical_line = ACS_VLINE) == 'x')
-		vertical_line = '|';
 	/* Try and keep the output on the terminal (not use the alternate
 	 * screen). This hack is probably copyright Thomas E. Dickey and
 	 * the FSF, although I take full responsibility for omitting what
 	 * looked like quite important defensive code cause I cba. I'm sure
 	 * in time I'll be even sorrier for that */
+	refresh();
 	putp(exit_ca_mode);
+	putp("\n"); /* FIXME: If PROG has no output, we print an empty line */
 	fflush(stdout);
 	enter_ca_mode = NULL, exit_ca_mode = NULL;
 
@@ -538,12 +543,17 @@ set_up_ncurses(WINDOW *RESTRICT *RESTRICT window)
 	start_color();
 
 	/* divide screen in half vertically */
-	window[0] = newwin(0, COLS / 2, 0, 0);
+	window[0] = newwin(0, COLS / 2, 0, 0),
 	window[1] = newwin(0, 0, 0, COLS / 2);
-	init_pair(1, COLOR_GREEN, 0);
-	init_pair(2, COLOR_RED, 0);
-	set_up_ncurses_window(window[0], 1, vertical_line);
-	set_up_ncurses_window(window[1], 2, vertical_line);
+	if (has_colors()) {
+		init_pair(1, COLOR_GREEN, 0);
+		init_pair(2, COLOR_RED, 0);
+		set_up_curses_window(window[0], 1);
+		set_up_curses_window(window[1], 2);
+	} else {
+		set_up_curses_window(window[0], 0);
+		set_up_curses_window(window[1], 0);
+	}
 }
 #endif /* with curses */
 
@@ -566,7 +576,7 @@ parent_listen(const int child_out, const int child_err,
 				: cat_in_technicolour;
 
 	/* whether the respective stream is still worth watching -- a bit
-	 * array of the file descriptors OR'd together. Clever, hey? */
+	 * array of the file descriptors OR'd together. Clever, hey? No */
 	unsigned char watch = STDOUT_FILENO | STDERR_FILENO;
 
 	/* ugly stuff for C ```polymorphism''' */
@@ -580,7 +590,7 @@ parent_listen(const int child_out, const int child_err,
 #ifdef WITH_CURSES
 	WINDOW *RESTRICT w[2];
 	if (flags & FLAG_CURSES) {
-		set_up_ncurses(w);
+		set_up_curses(w);
 		out_target = w[0], err_target = w[1];
 	} else
 #endif
