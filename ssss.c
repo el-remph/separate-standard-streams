@@ -28,9 +28,10 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  *  failing to compile on a future system, compared to the odds of anyone
  *  finding a system old enough to not have sys/select.h? And who would get
  *  pissier about it?
- ** The curses thing murderises the scrollback buffer. Use curses pads
- *  instead of windows? Or maybe some kind of auto-growing window, so that
- *  we don't use the whole screen immediately. Find out how less does it
+ ** The curses thing doesn't use the scrollback buffer. I keep thinking
+ *  that something like filter(3X) is the solution, then backing out. Pads
+ *  are probably the way to go, but they'll need to be manually wrapped and
+ *  grown
  ** waddnstr(3X) can't deal with embedded NUL chars, but waddch(3X) syncs
  *  we can't just call that iteratively. waddnstr(3X) also doesn't tell us
  *  where it left off (such as eg. strchrnul(3)) so we'd have to make a
@@ -197,19 +198,21 @@ typedef enum { false = 0, true = 1 } bool;
 #define STDERR_FILENO 2
 #endif
 
+#ifndef O_NONBLOCK
+#define O_NONBLOCK O_NDELAY
+/* And if O_NDELAY is undefined then we're really in trouble */
+#endif
+
 /* Take advantage of features where available */
-
-
-#if __STDC_VERSION__ >= 199901L
-# define INLINE inline
-# define RESTRICT restrict
-#elif (defined(__GNUC__) && !defined(__STRICT_ANSI__))
-# define INLINE __inline__
-# define RESTRICT __restrict__
-#else /* Neither -std=c99 nor -std=gnu89 */
-# define INLINE
-# define RESTRICT
-#endif /* -std=c99 or -std=gnu89 */
+#if !defined(__GNUC__)
+# if __STDC_VERSION__ >= 199901L
+#  define __inline__ inline
+#  define __restrict__ restrict
+# else
+#  define __inline__
+#  define __restrict__
+# endif
+#endif
 
 #if __STDC_VERSION__ >= 201100L
 # include <stdnoreturn.h>
@@ -256,7 +259,7 @@ const unsigned char
 #define TIMESTAMP_SIZE (sizeof "[00:00:00.000000] ")
 
 static void __attribute__((nonnull))
-sprint_time(char *RESTRICT buf)
+sprint_time(char *__restrict__ buf)
 /* buf must be TIMESTAMP_SIZE */
 {
 	struct timeval t;
@@ -267,8 +270,8 @@ sprint_time(char *RESTRICT buf)
 		".%06ld] ", t.tv_usec);
 }
 
-static INLINE void __attribute__((nonnull))
-mkprefix(const unsigned char flags, const int fd, char *RESTRICT prefixbuf)
+static __inline__ void __attribute__((nonnull))
+mkprefix(const unsigned char flags, const int fd, char *__restrict__ prefixbuf)
 /* Based on flags and fd, writes a prefix to prefixbuf that should prefix
  * each buffalo in buffalo, eg. `[21:34:56.135429]&1 ' */
 {
@@ -291,10 +294,10 @@ mkprefix(const unsigned char flags, const int fd, char *RESTRICT prefixbuf)
 
 /* TODO: the two prepend_lines functions need to be merged properly */
 
-static INLINE void __attribute__((nonnull))
-prepend_lines(FILE *RESTRICT outstream, const char *RESTRICT prefixstr,
+static __inline__ void __attribute__((nonnull))
+prepend_lines(FILE *__restrict__ outstream, const char *__restrict__ prefixstr,
 		const char * unprinted __attribute__((nonstring)),
-		/* can't be^RESTRICTed because it's aliased in the function
+		/* can't be^__restrict__ed because it's aliased in the function
 		 * body by newline_ptr */
 		size_t n_unprinted)
 {
@@ -316,7 +319,7 @@ prepend_lines(FILE *RESTRICT outstream, const char *RESTRICT prefixstr,
 
 #ifdef WITH_CURSES
 static int /* int for waddnstr(3X) compatibility */ __attribute__((nonnull))
-prepend_lines_curses(WINDOW *RESTRICT w, const curs_char_T * unprinted,
+prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 		int /*waddnstr(3X) again*/ n_unprinted)
 {
 	const curs_char_T * newline_ptr = unprinted;
@@ -360,7 +363,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	ssize_t nread;
 	char prefixstr[TIMESTAMP_SIZE + 3];
 	char buf[BUFSIZ] __attribute__((nonstring));
-	FILE *RESTRICT outstream;
+	FILE *__restrict__ outstream;
 	const int fd = *(int*)output_target;
 	bool ret = true;
 
@@ -371,7 +374,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	 *
 	 * Also, writers of code readability guidelines are fannies */
 
-	const char *RESTRICT colour =
+	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
@@ -413,7 +416,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 	/* const everything */
 	const int fd = *(int*)output_target;
 	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : fd;
-	const char *RESTRICT colour =
+	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
 			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
@@ -503,7 +506,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 }
 
 static void __attribute__((nonnull))
-set_up_curses_window(WINDOW *RESTRICT w, const short colour_pair)
+set_up_curses_window(WINDOW *__restrict__ w, const short colour_pair)
 {
 	idlok(w, true);
 	scrollok(w, true);
@@ -519,8 +522,8 @@ set_up_curses_window(WINDOW *RESTRICT w, const short colour_pair)
 	leaveok(w, true); /* No more need for the cursor */
 }
 
-static INLINE void __attribute__((nonnull))
-set_up_curses(WINDOW *RESTRICT *RESTRICT window)
+static __inline__ void __attribute__((nonnull))
+set_up_curses(WINDOW *__restrict__ *__restrict__ window)
 /* window must be an array of exactly two WINDOW pointers */
 {
 	/* just a cast to shut up the compiler */
@@ -557,7 +560,7 @@ set_up_curses(WINDOW *RESTRICT *RESTRICT window)
 }
 #endif /* with curses */
 
-static INLINE void
+static __inline__ void
 parent_listen(const int child_out, const int child_err,
 		const unsigned char flags)
 {
@@ -588,7 +591,7 @@ parent_listen(const int child_out, const int child_err,
 
 	/* Beware: cute preprocessor shit */
 #ifdef WITH_CURSES
-	WINDOW *RESTRICT w[2];
+	WINDOW *__restrict__ w[2];
 	if (flags & FLAG_CURSES) {
 		set_up_curses(w);
 		out_target = w[0], err_target = w[1];
@@ -635,8 +638,8 @@ parent_listen(const int child_out, const int child_err,
 	} while (watch);
 }
 
-static INLINE int __attribute__((nonnull))
-parent_wait_for_child(const char *RESTRICT child, const unsigned char flags)
+static __inline__ int __attribute__((nonnull))
+parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
 /* Clean up after child (common parenting experience). Returns $? */
 {
 	int child_ret;
@@ -671,7 +674,7 @@ parent_wait_for_child(const char *RESTRICT child, const unsigned char flags)
 }
 
 noreturn static void
-usage(const char *RESTRICT progname)
+usage(const char *__restrict__ progname)
 {
 	static const char help[] = "\
 Usage: %s [OPT(s)] PROG [PROGARG(s)]\n\
@@ -878,7 +881,7 @@ handle_bad_prog(int sig __attribute__((unused)))
 			piddle);
 }
 
-static INLINE void
+static __inline__ void
 setup_handle_bad_prog(void)
 {
 	struct sigaction handle_bad_prog_onsig;
@@ -889,9 +892,10 @@ setup_handle_bad_prog(void)
 		warn("sigaction(2)");
 }
 
-static INLINE void __attribute__((nonnull))
-child_prepare(const char *RESTRICT cmd, const unsigned char flags,
-		int *RESTRICT child_stdout, int *RESTRICT child_stderr)
+static __inline__ void __attribute__((nonnull))
+child_prepare(const char *__restrict__ cmd, const unsigned char flags,
+		int *__restrict__ child_stdout,
+		int *__restrict__ child_stderr)
 /* int pointers are to arrays of exactly 2 ints */
 {
 	/* Close read ends, we're reading from the child so the
@@ -917,9 +921,10 @@ child_prepare(const char *RESTRICT cmd, const unsigned char flags,
 	dup2(child_stderr[1], STDERR_FILENO);
 }
 
-static INLINE void __attribute__((nonnull))
-parent_prepare(const unsigned char flags, int *RESTRICT child_stdout,
-		int *RESTRICT child_stderr)
+static __inline__ void __attribute__((nonnull))
+parent_prepare(const unsigned char flags,
+		int *__restrict__ child_stdout,
+		int *__restrict__ child_stderr)
 /* int pointers are to arrays of exactly 2 ints */
 {
 	/* Inverse of the child process' close(2) calls */
