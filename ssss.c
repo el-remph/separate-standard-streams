@@ -140,6 +140,14 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 
 #ifdef WITH_CURSES
 
+/* target_T could be the address of a WINDOW, or just a plain int */
+# if __STDC_VERSION__ >= 199900L
+#  include <stdint.h>
+typedef intptr_t target_T;
+# else
+typedef signed long int target_T; /* decent guess for intptr_t */
+# endif /* C99 */
+
 /* sidestep some -pedantic compiler warnings when -ansi */
 # ifdef __STRICT_ANSI__
 #  define NCURSES_ENABLE_STDBOOL_H 0
@@ -181,6 +189,8 @@ typedef char curs_char_T;
 # else /* Neither -std=c99 nor -std=gnu89 */
 typedef enum { false = 0, true = 1 } bool;
 # endif /* -std=c99 or -std=gnu89 */
+
+typedef int target_T; /* we're only working with file descriptors */
 
 #endif /* with curses */
 
@@ -352,19 +362,18 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 #endif /* with curses */
 
 #define CAT_IN_TECHNICOLOUR(a)\
-	bool a(const int ifd, void * output_target, const unsigned char flags)
+	bool a(const int ifd, const target_T output_target, const unsigned char flags)
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
 static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
-/* This one outputs to FILE* streams */
+/* This one outputs to FILE* streams. output_target is the *value* of an fd */
 {
 	ssize_t nread;
 	char prefixstr[TIMESTAMP_SIZE + 3];
 	char buf[BUFSIZ] __attribute__((nonstring));
 	FILE *__restrict__ outstream;
-	const int fd = *(int*)output_target;
 	bool ret = true;
 
 	/* While this does mean that flags must be rechecked every time this
@@ -376,18 +385,18 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 
 	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
-			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
+			? (output_target == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
 
 	if (flags & FLAG_ALLINONE)
 		outstream = stdout;
-	else switch (fd) {
+	else switch (output_target) {
 		case STDOUT_FILENO: outstream = stdout; break;
 		case STDERR_FILENO: outstream = stderr; break;
 		default: errno = EBADF; err(-1, "internal error");
 	}
 
-	mkprefix(flags, fd, prefixstr);
+	mkprefix(flags, output_target, prefixstr);
 
 	do {
 		nread = read(ifd, buf, BUFSIZ);
@@ -411,14 +420,14 @@ end:
 
 static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
-/* This one outputs to unix file descriptors */
+/* This one outputs to unix file descriptors. output_target is the *value*
+ * of an fd */
 {
 	/* const everything */
-	const int fd = *(int*)output_target;
-	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : fd;
+	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : output_target;
 	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
-			? (fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
+			? (output_target == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
 
 	/* actual variables we'll be operating on, we need for io */
@@ -457,7 +466,7 @@ test_nread:	switch (nread) {
 #ifdef WITH_CURSES
 static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
-/* This one outputs to WINDOW* objects */
+/* This one outputs to WINDOW* objects. output_target is the *address* of a WINDOW */
 {
 	WINDOW * w = (WINDOW*)output_target;
 	ssize_t nread;
@@ -583,21 +592,17 @@ parent_listen(const int child_out, const int child_err,
 	unsigned char watch = STDOUT_FILENO | STDERR_FILENO;
 
 	/* ugly stuff for C ```polymorphism''' */
-	void * out_target, * err_target;
-	/* These could and probably should be const, but passing a void* to
-	 * them makes that feel kinda dishonest, and also the compiler gets
-	 * up my ass for it, so have a static to make up for it */
-	static int out_fd = STDOUT_FILENO, err_fd = STDERR_FILENO;
+	target_T out_target, err_target;
 
 	/* Beware: cute preprocessor shit */
 #ifdef WITH_CURSES
 	WINDOW *__restrict__ w[2];
 	if (flags & FLAG_CURSES) {
 		set_up_curses(w);
-		out_target = w[0], err_target = w[1];
+		out_target = (target_T)w[0], err_target = (target_T)w[1];
 	} else
 #endif
-		out_target = &out_fd, err_target = &err_fd;
+		out_target = STDOUT_FILENO, err_target = STDERR_FILENO;
 
 	/* set pipes to nonblocking so that if we get more than BUFSIZ
 	 * bytes at once we can use read(2) to check if the pipe is empty
@@ -914,7 +919,7 @@ child_prepare(const char *__restrict__ cmd, const unsigned char flags,
 			sprint_time(buf);
 			fputs(buf, stderr);
 		}
-		warnx("starting %s", cmd);
+		warnx("starting %s", cmd); /* TODO: ripoffline(3X)? */
 		fflush(stderr);
 	}
 
