@@ -47,15 +47,8 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
  *  doesn't have the latter, the program will silently compile fine without
  *  its functionality
- ** _POSIX_C_SOURCE>=2 for getopt(3) and iirc gettimeofday(2) and select(2)
- ** _BSD_SOURCE is so we can use gettimeofday(2) for compatibility with old
- *  systems, cause adoption of clock_gettime(2) was a bit of a minefield. It
- *  was POSIXed in 1993, but the BSDs didn't implement it until the late 90s
- *  and Linux didn't implement it for the better part of a decade, and then
- *  when it did, it wanted LDFLAGS+=-lrt for a while, until it didn't. Now
- *  everyone's caught up, POSIX is very eager to `obsolete' gettimeofday(2)
- *  but considering the speed of response to the introduction of
- *  clock_gettime(2), I'm not holding my breath
+ ** _POSIX_C_SOURCE>=2 for getopt(3) and iirc gettimeofday(2) and select(2),
+ ** _POSIX_C_SOURCE>=200809L for strsignal(3) in glibc
  *
  ** snprintf(3) is widely available and may be enabled by _BSD_SOURCE,
  *  _XOPEN_SOURCE>=500, or just ISO C99
@@ -67,63 +60,29 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  *  have either musl or uClibc, both of which provide <err.h>. So it might
  *  as well be standardised, and is much too useful to give up. Nevertheless,
  *  HP-UX and IBM AIX users beware! (maybe)
- ** If available (on GNU or POSIX-2008-conformant systems), strsignal(3) is
- *  used. Otherwise, sys_siglist is used, inkeeping with the ancient BSD
- *  feel
- *
- * If bloody glibc wouldn't be such a bitch about _BSD_SOURCE basically
- * spoiling all your macros, this would make life a hell of a lot easier
+ ** Fucking strsignal(3) is such a bitch for compatibility, if you don't
+ *  have it then -D'strsignal(s)=sys_siglist[s]'
  *
  * But *other* than all that, the code is fine with just _POSIX_C_SOURCE or
  * even _POSIX_SOURCE (though we don't define that cause glibc gripes about
  * that too) */
-#ifndef _XOPEN_SOURCE
+#define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 500
-#endif
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 2
-#endif
-
-/* Semi-standard, BSD-origin (sys_siglist[], and gettimeofday(2) is
- * ex-POSIX, the others are POSIX)
- *
- * Yeah I know I'm not supposed to fuck with the macros like this. To
- * mitigate some of the damage, the headers for which the macros are
- * fucked with are the first included, so if they need to include any
- * headers of their own with those same macros defined, that's certain to
- * happen here */
-#ifndef _BSD_SOURCE
-#define _BSD_SOURCE
-#endif
-#include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
-#include <signal.h>	/* sigaction(2), kill(2), sys_siglist[] if we can't
-			 * get strsignal(3) */
-
-#ifdef DEBUG_MACROS
-/* provide a consistent lowest-common-denominator environment */
-# undef _BSD_SOURCE
-# undef _SVID_SOURCE /* justin case */
-# undef _DEFAULT_SOURCE
-# undef  _GNU_SOURCE
-# undef  _XOPEN_SOURCE
-# define _XOPEN_SOURCE 500
-# undef  _POSIX_C_SOURCE
-# define _POSIX_C_SOURCE 2
-#endif
 
 /* STDC */
 #include <errno.h>
 #include <locale.h>	/* setlocale(3) */
 #include <stdio.h>
 #include <stdlib.h>	/* exit(3), atexit(3) */
-#include <string.h>	/* memcpy(3), memchr(3); strlen(3) and strcmp(3) in
-			 * process_cmdline(); strsignal(3) if available */
-
+#include <string.h>	/* memcpy(3), memchr(3); strcmp(3) in process_cmdline();
+			 * strsignal(3) */
 /* POSIX */
 #include <err.h>	/* Not actually POSIX but should be */
 #include <fcntl.h>	/* Actually fcntl(2), funnily enough */
+#include <signal.h>	/* sigaction(2), kill(2) */
 #include <sys/select.h> /* old systems may need to delete this (the old
 			 * necessary header files are included anyway) */
+#include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
 #include <sys/types.h>	/* Big fat misc: ssize_t, wait(2), write(2), general
 			 * good practice, one change fewer for select(2) to
 			 * work on old systems... */
@@ -132,11 +91,6 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #include <unistd.h>	/* pipe(2), dup2(2), fork(2), execvp(3), getopt(3),
 			 * isatty(3), write(2), read(2) */
 
-#if defined(_GNU_SOURCE) || _POSIX_C_SOURCE >= 200809L
-# define STRSIGNAL(sig) strsignal(sig)
-#else
-# define STRSIGNAL(sig) sys_siglist[sig]
-#endif /* GNU or POSIX-2008 */
 
 #ifdef WITH_CURSES
 
@@ -156,11 +110,14 @@ typedef signed long int target_T; /* decent guess for intptr_t */
 # ifdef WITH_CURSES_WIDE
 #  include <wchar.h>	/* mbsrtowcs(3), wmemchr(3) */
 #  define NCURSES_WIDECHAR 1
+/* already defined _XOPEN_SOURCE=500, I think */
 #  define _XOPEN_SOURCE_EXTENDED
 #  define WADDNSTR waddnwstr
+#  define MEMCHR wmemchr
 typedef wchar_t curs_char_T;
 # else
 #  define WADDNSTR waddnstr
+#  define MEMCHR memchr
 typedef char curs_char_T;
 # endif /* with wide curses */
 
@@ -209,8 +166,11 @@ typedef int target_T; /* we're only working with file descriptors */
 #endif
 
 #ifndef O_NONBLOCK
-#define O_NONBLOCK O_NDELAY
-/* And if O_NDELAY is undefined then we're really in trouble */
+# ifdef O_NDELAY
+#  define O_NONBLOCK O_NDELAY
+# else
+#  error
+# endif
 #endif
 
 /* Take advantage of features where available */
@@ -229,20 +189,6 @@ typedef int target_T; /* we're only working with file descriptors */
 #else
 # define noreturn __attribute__((__noreturn__))
 /* Beware using noreturn in functions with other __attribute__s */
-#endif
-
-/* An oversight in POSIX: if an IO function fails due to O_NONBLOCK, errno
- * could be either EAGAIN or EWOULDBLOCK, and they may be different values.
- * In practice, this is rarely if ever the case, but truly POSIXLY_CORRECT
- * programs should test both. This tests if this actually necessary */
-#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
-# define WOULD_BLOCK(e) (e == EWOULDBLOCK | e == EAGAIN)
-/* Bitwise OR is here used in place of its^boolean cousin because its
- * operands are true booleans. The two options are optimised to the same
- * assembly output by any modern optimising compiler, but on older
- * compilers this produces very marginally better assembly, so */
-#else
-# define WOULD_BLOCK(e) (e == EAGAIN)
 #endif
 
 /* Flag constants -- used to be macros, but it's useful to have them typed
@@ -270,7 +216,16 @@ const unsigned char
 
 static void __attribute__((nonnull))
 sprint_time(char *__restrict__ buf)
-/* buf must be TIMESTAMP_SIZE */
+/* buf must be TIMESTAMP_SIZE
+ *
+ * This uses gettimeofday(2) for compatibility with old systems, cause
+ * adoption of clock_gettime(2) was a bit of a minefield. It was POSIXed in
+ * 1993, but the BSDs didn't implement it until the late 90s and Linux
+ * didn't implement it for the better part of a decade, and then when it
+ * did, glibc wanted LDFLAGS+=-lrt for a while, until it didn't. Now
+ * everyone's caught up, POSIX is very eager to `obsolete' gettimeofday(2)
+ * but considering the speed of response to the introduction of
+ * clock_gettime(2), I'm not holding my breath */
 {
 	struct timeval t;
 	gettimeofday(&t, NULL);
@@ -338,15 +293,11 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 	sprint_time(prefixstr);
 
 	/* Look for a newline anywhere but the last char */
-# ifdef WITH_CURSES_WIDE
-	while ((newline_ptr = wmemchr(unprinted, L'\n', n_unprinted - 1))) {
-# else
-	while ((newline_ptr = memchr(unprinted, '\n', n_unprinted - 1))) {
-# endif
+	while ((newline_ptr = MEMCHR(unprinted, '\n', n_unprinted - 1))) {
 		/* I want to use lots of sizeof here but apparently C's
 		 * type system handles that just fine */
-		size_t n_printed = ++newline_ptr - unprinted;
-		/* ++preincrement  ^^ significant here */
+		const size_t n_printed = ++newline_ptr - unprinted;
+		/* note ++preincrement   ^^ here */
 		waddstr(w, prefixstr);
 		n_unprinted -= n_printed; /* Bit optimistic */
 		WADDNSTR(w, unprinted, n_printed);
@@ -366,6 +317,16 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
+static __inline__ FILE * __attribute__((pure, returns_nonnull))
+std_fileno_to_stream(const int fd)
+{
+	switch (fd) {
+		case STDOUT_FILENO: return stdout;
+		case STDERR_FILENO: return stderr;
+		default: errno = EBADF; err(-1, "internal error");
+	}
+}
+
 static __attribute__((nonnull))
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 /* This one outputs to FILE* streams. output_target is the *value* of an fd */
@@ -373,7 +334,6 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	ssize_t nread;
 	char prefixstr[TIMESTAMP_SIZE + 3];
 	char buf[BUFSIZ] __attribute__((nonstring));
-	FILE *__restrict__ outstream;
 	bool ret = true;
 
 	/* While this does mean that flags must be rechecked every time this
@@ -387,14 +347,8 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 		(flags & FLAG_COLOUR)
 			? (output_target == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
-
-	if (flags & FLAG_ALLINONE)
-		outstream = stdout;
-	else switch (output_target) {
-		case STDOUT_FILENO: outstream = stdout; break;
-		case STDERR_FILENO: outstream = stderr; break;
-		default: errno = EBADF; err(-1, "internal error");
-	}
+	FILE *__restrict__ outstream =
+		(flags & FLAG_ALLINONE) ? stdout : std_fileno_to_stream(output_target);
 
 	mkprefix(flags, output_target, prefixstr);
 
@@ -402,7 +356,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 		nread = read(ifd, buf, BUFSIZ);
 		switch (nread) {
 			case -1:
-				if (WOULD_BLOCK(errno))
+				if (errno == EAGAIN)
 					goto end;
 				else
 					err(-1, "read(2)");
@@ -450,7 +404,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 		nread = read(ifd, buf, BUFSIZ);
 test_nread:	switch (nread) {
 			case -1:
-			if (WOULD_BLOCK(errno))
+			if (errno == EAGAIN)
 				return true;
 			else
 				err(-1, "read(2)");
@@ -487,13 +441,13 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 # endif
 		);
 		switch (nread) {
-			case -1:
-			if (WOULD_BLOCK(errno))
+		case -1:
+			if (errno == EAGAIN)
 				return true;
 			else
 				err(-1, "read(2)");
-			case  0: close(ifd); return false;
-			default:
+		case 0:	close(ifd); return false;
+		default:
 # ifdef WITH_CURSES_WIDE
 			buf[nread] = '\0'; /* Hence BUFSIZ - 1 above */
 			{
@@ -669,7 +623,7 @@ parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
 			if (WIFSIGNALED(child_ret)) {
 				const int sig = WTERMSIG(child_ret);
 				warnx("%s killed by signal %d: %s",
-					child, sig, STRSIGNAL(sig));
+					child, sig, strsignal(sig));
 			} else
 				warn("%s wait(2) status unexpected: %d. errno says",
 					child, child_ret);

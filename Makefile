@@ -30,11 +30,9 @@
 #	gcc -lcurses -s ssss.o -o ssss
 
 
-CWARNINGS ?=-Wall -Wextra -Wno-implicit-fallthrough -Wno-overlength-strings -Wno-cpp
+CWARNINGS ?=-Wall -Wextra -Wno-implicit-fallthrough -Wno-overlength-strings
 # I would really rather not have to use -Wno-implicit-fallthrough here, but
 # I can't get -Wimplicit-fallthrough=n to work
-#
-# -Wno-cpp is for glibc's features.h bloody whining about bloody _BSD_SOURCE
 
 ifdef WITH_CURSES
         CPPFLAGS += -DWITH_CURSES
@@ -48,16 +46,15 @@ ifdef WITH_CURSES
 endif
 
 ifdef DEBUG
-        # a dev build
-        CPPFLAGS     += -DDEBUG_MACROS
-        CWARNINGS    += -Winline
-        CSTANDARD    ?=-ansi -pedantic
-        OPTIMISATION ?=-Og -ggdb3
+    # a dev build
+    CWARNINGS    += -Winline
+    CSTANDARD    ?=-ansi -pedantic
+    OPTIMISATION ?=-Og -ggdb3
 else
-        # Proper build -- don't define CSTANDARD (unless the user does on
-        # the command line), let the compiler use everything it's got
-        OPTIMISATION ?=-O2 -march=native -mtune=native
-        LDFLAGS      += -s
+    # Proper build -- don't define CSTANDARD (unless the user does on
+    # the command line), let the compiler use everything it's got
+    OPTIMISATION ?=-O2 -march=native -mtune=native
+    LDFLAGS      += -s
 endif
 
 CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
