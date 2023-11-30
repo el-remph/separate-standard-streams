@@ -48,6 +48,8 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  *  doesn't have the latter, the program will silently compile fine without
  *  its functionality
  ** _POSIX_C_SOURCE>=2 for getopt(3) and iirc gettimeofday(2) and select(2),
+ ** _POSIX_C_SOURCE>=199309L for sigqueue(3) (optional, replaced with
+ *  kill(2) if SA_SIGINFO is undefined, but you're pretty likely to have it)
  ** _POSIX_C_SOURCE>=200809L for strsignal(3) in glibc
  *
  ** snprintf(3) is widely available and may be enabled by _BSD_SOURCE,
@@ -80,7 +82,7 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #include <err.h>	/* Not actually POSIX but should be */
 #include <fcntl.h>	/* Actually fcntl(2), funnily enough */
 #include <signal.h>	/* sigaction(2), kill(2) */
-#include <sys/select.h> /* old systems may need to delete this (the old
+#include <sys/select.h>	/* old systems may need to delete this (the old
 			 * necessary header files are included anyway) */
 #include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
 #include <sys/types.h>	/* Big fat misc: ssize_t, wait(2), write(2), general
@@ -156,6 +158,9 @@ typedef int target_T; /* we're only working with file descriptors */
 /* In case some macros aren't defined in those headers, on very old systems */
 #ifndef SA_RESETHAND
 #define SA_RESETHAND 0 /* ): */
+#endif
+#ifndef SA_SIGINFO
+#define SA_SIGINFO 0 /* ): */
 #endif
 
 #ifndef STDOUT_FILENO
@@ -327,7 +332,7 @@ std_fileno_to_stream(const int fd)
 	}
 }
 
-static __attribute__((nonnull))
+static
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 /* This one outputs to FILE* streams. output_target is the *value* of an fd */
 {
@@ -355,13 +360,15 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	do {
 		nread = read(ifd, buf, BUFSIZ);
 		switch (nread) {
-			case -1:
-				if (errno == EAGAIN)
-					goto end;
-				else
-					err(-1, "read(2)");
-			case  0: close(ifd); ret = false; goto end;
-			default:
+		case -1:
+			if (errno == EAGAIN)
+				goto end;
+			else
+				err(-1, "read(2)");
+
+		case 0:	close(ifd); ret = false; goto end;
+
+		default:
 			fputs(colour, outstream);
 			prepend_lines(outstream, prefixstr, buf, nread);
 		}
@@ -372,7 +379,7 @@ end:
 	return ret;
 }
 
-static __attribute__((nonnull))
+static
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 /* This one outputs to unix file descriptors. output_target is the *value*
  * of an fd */
@@ -403,14 +410,14 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 	do {
 		nread = read(ifd, buf, BUFSIZ);
 test_nread:	switch (nread) {
-			case -1:
+		case -1:
 			if (errno == EAGAIN)
 				return true;
 			else
 				err(-1, "read(2)");
 
-			case  0: close(ifd); return false;
-			default: write(ofd, buf, nread);
+		case 0:	close(ifd); return false;
+		default:write(ofd, buf, nread);
 		}
 	} while (nread == BUFSIZ);
 
@@ -418,7 +425,7 @@ test_nread:	switch (nread) {
 }
 
 #ifdef WITH_CURSES
-static __attribute__((nonnull))
+static
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 /* This one outputs to WINDOW* objects. output_target is the *address* of a WINDOW */
 {
@@ -426,7 +433,6 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 	ssize_t nread;
 	int (*out_)(WINDOW*, const curs_char_T*, int) =
 		(flags & FLAG_TIMESTAMPS) ? prepend_lines_curses : WADDNSTR;
-
 # ifndef WITH_CURSES_WIDE
 	/* If we're WIDE then buf is passed to mbsrtowcs(3), so must be
 	 * ASCIZ; else goes straight out_() */
@@ -500,7 +506,6 @@ set_up_curses(WINDOW *__restrict__ *__restrict__ window)
 	 * in time I'll be even sorrier for that */
 	refresh();
 	putp(exit_ca_mode);
-	putp("\n"); /* FIXME: If PROG has no output, we print an empty line */
 	fflush(stdout);
 	enter_ca_mode = NULL, exit_ca_mode = NULL;
 
@@ -669,7 +674,7 @@ Options:\n\
 noreturn static void
 version(void)
 {
-	char verspiel[] = "ssss version 0.1, built " __DATE__
+	puts("ssss version 0.1, built " __DATE__
 #ifdef WITH_CURSES
 		", with the -S extension with"
 # ifndef WITH_CURSES_WIDE
@@ -677,18 +682,7 @@ version(void)
 # endif
 		" UTF-8 support"
 #endif
-		"\n" SPIEL;
-
-#if 1 /* The artist formerly known as #ifdef DEBUG_MACROS */
-	printf("%s\n\n_POSIX_C_SOURCE=%ld\n_XOPEN_SOURCE=%d\n_GNU_SOURCE "
-# ifndef _GNU_SOURCE
-		"un"
-# endif
-		"defined\n", verspiel, (long)_POSIX_C_SOURCE, _XOPEN_SOURCE);
-#else
-	puts(verspiel);
-#endif
-
+		"\n" SPIEL);
 	exit(EXIT_SUCCESS);
 }
 
@@ -825,16 +819,25 @@ clean_up_colour()
 }
 
 static void
-handle_bad_prog(int sig __attribute__((unused)))
+handle_bad_prog(int sig __attribute__((unused))
+#if SA_SIGINFO
+		, siginfo_t * si, void * ucontext __attribute__((unused))
+#endif
+		)
 /* signal handler, set up by setup_handle_bad_prog, to see if the child
  * process fails to exec and signals this back to us -- if it does, it will
- * exit with the value of errno after execvp(3) failed */
+ * exit with the value of errno after execvp(3) failed, and if possible,
+ * queues a pointer to the name of the program */
 {
 	int child_ret;
 	const pid_t piddle = wait(&child_ret);
 	if (WIFEXITED(child_ret)) {
 		errno = WEXITSTATUS(child_ret);
+#if SA_SIGINFO
+		err(-1, "%s", (char*)si->si_ptr);
+#else
 		err(-1, "can't exec command");
+#endif
 	} else
 		err(-1, "unexpected error in child process, pid %d",
 			piddle);
@@ -844,8 +847,13 @@ static __inline__ void
 setup_handle_bad_prog(void)
 {
 	struct sigaction handle_bad_prog_onsig;
-	handle_bad_prog_onsig.sa_handler = handle_bad_prog;
-	handle_bad_prog_onsig.sa_flags = SA_RESETHAND;
+#if SA_SIGINFO
+	handle_bad_prog_onsig.sa_sigaction =
+#else
+	handle_bad_prog_onsig.sa_handler =
+#endif
+		handle_bad_prog;
+	handle_bad_prog_onsig.sa_flags = SA_RESETHAND | SA_SIGINFO;
 	sigemptyset(&handle_bad_prog_onsig.sa_mask);
 	if (sigaction(SIGUSR1, &handle_bad_prog_onsig, NULL))
 		warn("sigaction(2)");
@@ -923,13 +931,15 @@ parent_prepare(const unsigned char flags,
 int
 main(const int argc, char *const argv[])
 {
-	const unsigned char flags = process_cmdline(argc, argv);
 	int child_stdout[2], child_stderr[2];
-	pipe(child_stdout);
-	pipe(child_stderr);
+	const unsigned char flags = process_cmdline(argc, argv);
 
 	setlocale(LC_ALL, "");
-	/* curses in particular wants this, but also just good practice */
+	/* curses in particular wants this, but also just good practice
+	 * FIXME: should come before the call to process_cmdline */
+
+	pipe(child_stdout);
+	pipe(child_stderr);
 
 	setup_handle_bad_prog(); /* i.e. handle SIGUSR1. Best do this
 	* before we fork(2), in case of the unlikely event that the child
@@ -943,10 +953,16 @@ main(const int argc, char *const argv[])
 	case 0:
 		child_prepare(argv[optind], flags, child_stdout, child_stderr);
 		execvp(argv[optind], argv + optind);
-		/* If we're here, then exec(3) failed */
+		/* If we're here, exec(3) failed; run to parent and tell */
 		{
 			const int er = errno;
-			kill(getppid(), SIGUSR1); /* run to parent and tell */
+#if SA_SIGINFO
+			union sigval progname;
+			progname.sival_ptr = argv[optind];
+			sigqueue(getppid(), SIGUSR1, progname);
+#else
+			kill(getppid(), SIGUSR1);
+#endif
 			return er/*? I 'ardly know 'er! Sorry */;
 		}
 
