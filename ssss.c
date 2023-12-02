@@ -68,8 +68,14 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  * But *other* than all that, the code is fine with just _POSIX_C_SOURCE or
  * even _POSIX_SOURCE (though we don't define that cause glibc gripes about
  * that too) */
+#if _POSIX_C_SOURCE < 200809L
+#undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#endif
+#if _XOPEN_SOURCE < 500
+#undef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 500
+#endif
 
 /* STDC */
 #include <errno.h>
@@ -95,14 +101,6 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 
 
 #ifdef WITH_CURSES
-
-/* target_T could be the address of a WINDOW, or just a plain int */
-# if __STDC_VERSION__ >= 199900L
-#  include <stdint.h>
-typedef intptr_t target_T;
-# else
-typedef signed long int target_T; /* decent guess for intptr_t */
-# endif /* C99 */
 
 /* sidestep some -pedantic compiler warnings when -ansi */
 # ifdef __STRICT_ANSI__
@@ -148,9 +146,6 @@ typedef char curs_char_T;
 # else /* Neither -std=c99 nor -std=gnu89 */
 typedef enum { false = 0, true = 1 } bool;
 # endif /* -std=c99 or -std=gnu89 */
-
-typedef int target_T; /* we're only working with file descriptors */
-
 #endif /* with curses */
 
 #include "compat__attribute__.h" /* This must always be the last #include */
@@ -191,10 +186,20 @@ typedef int target_T; /* we're only working with file descriptors */
 
 #if __STDC_VERSION__ >= 201100L
 # include <stdnoreturn.h>
+#elif defined(__WATCOMC__) /* My condolences */
+# define noreturn __declspec(noreturn)
 #else
 # define noreturn __attribute__((__noreturn__))
 /* Beware using noreturn in functions with other __attribute__s */
 #endif
+
+union target {
+	int fd;
+	FILE * fp;
+#ifdef WITH_CURSES
+	WINDOW * w;
+#endif
+};
 
 /* Flag constants -- used to be macros, but it's useful to have them typed
  * just in case */
@@ -318,23 +323,13 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 #endif /* with curses */
 
 #define CAT_IN_TECHNICOLOUR(a)\
-	bool a(const int ifd, const target_T output_target, const unsigned char flags)
+	bool a(const int ifd, const union target output_target, const unsigned char flags)
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
-static __inline__ FILE * __attribute__((pure, returns_nonnull))
-std_fileno_to_stream(const int fd)
-{
-	switch (fd) {
-		case STDOUT_FILENO: return stdout;
-		case STDERR_FILENO: return stderr;
-		default: errno = EBADF; err(-1, "internal error");
-	}
-}
-
 static
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
-/* This one outputs to FILE* streams. output_target is the *value* of an fd */
+/* This one outputs to FILE* streams */
 {
 	ssize_t nread;
 	char prefixstr[TIMESTAMP_SIZE + 3];
@@ -343,19 +338,14 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 
 	/* While this does mean that flags must be rechecked every time this
 	 * is called, I tried the other way and believe it or not it was
-	 * even worse. Also, need colour in here to move towards merging with
-	 * the curses version
-	 *
-	 * Also, writers of code readability guidelines are fannies */
-
+	 * even worse. Also, for compatibility with curse_in_technicolour */
 	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
-			? (output_target == STDOUT_FILENO ? "\033[32m" : "\033[31m")
+			? (output_target.fp == stdout ? "\033[32m" : "\033[31m")
 			: "";
-	FILE *__restrict__ outstream =
-		(flags & FLAG_ALLINONE) ? stdout : std_fileno_to_stream(output_target);
+	FILE * outstream = (flags & FLAG_ALLINONE) ? stdout : output_target.fp;
 
-	mkprefix(flags, output_target, prefixstr);
+	mkprefix(flags, fileno(output_target.fp), prefixstr);
 
 	do {
 		nread = read(ifd, buf, BUFSIZ);
@@ -381,14 +371,13 @@ end:
 
 static
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
-/* This one outputs to unix file descriptors. output_target is the *value*
- * of an fd */
+/* This one outputs to unix file descriptors */
 {
 	/* const everything */
-	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : output_target;
+	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : output_target.fd;
 	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
-			? (output_target == STDOUT_FILENO ? "\033[32m" : "\033[31m")
+			? (output_target.fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
 
 	/* actual variables we'll be operating on, we need for io */
@@ -427,9 +416,8 @@ test_nread:	switch (nread) {
 #ifdef WITH_CURSES
 static
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
-/* This one outputs to WINDOW* objects. output_target is the *address* of a WINDOW */
+/* This one outputs to WINDOW* objects */
 {
-	WINDOW * w = (WINDOW*)output_target;
 	ssize_t nread;
 	int (*out_)(WINDOW*, const curs_char_T*, int) =
 		(flags & FLAG_TIMESTAMPS) ? prepend_lines_curses : WADDNSTR;
@@ -441,7 +429,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 	char buf[BUFSIZ];
 
 	do {
-		nread = read(ifd, buf, BUFSIZ
+		nread = read(ifd, buf, sizeof buf
 # ifdef WITH_CURSES_WIDE
 			- 1 /* for NUL */
 # endif
@@ -462,12 +450,12 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 				const size_t fet =
 					mbsrtowcs(wbuf, &ptr, BUFSIZ, NULL);
 				if (fet == (size_t)-1) err(-1, "input");
-				out_(w, wbuf,fet/* wobuffet! */);
+				out_(output_target.w, wbuf,fet/* wobuffet! */);
 			}
 # else
-			out_(w, buf, nread);
+			out_(output_target.w, buf, nread);
 # endif
-			wnoutrefresh(w);
+			wnoutrefresh(output_target.w);
 		}
 	} while (nread == BUFSIZ);
 
@@ -533,35 +521,31 @@ parent_listen(const int child_out, const int child_err,
 		const unsigned char flags)
 {
 	/* If -t|-p, points to a more compicated function that uses stdio;
-	 * else points to a slimmer one using only unix io
-	 *
-	 * C noobs BTFO as ever */
-	CAT_IN_TECHNICOLOUR((*cat_in_technicolour_)) =
-#ifdef WITH_CURSES
-		(flags & FLAG_CURSES)
-			? curse_in_technicolour
-			:
-#endif
-			(flags & (FLAG_TIMESTAMPS | FLAG_PREFIX))
-				? cat_in_technicolour_timestamps
-				: cat_in_technicolour;
+	 * else points to a slimmer one using only unix io */
+	CAT_IN_TECHNICOLOUR((*cat_in_technicolour_));
 
 	/* whether the respective stream is still worth watching -- a bit
 	 * array of the file descriptors OR'd together. Clever, hey? No */
 	unsigned char watch = STDOUT_FILENO | STDERR_FILENO;
 
 	/* ugly stuff for C ```polymorphism''' */
-	target_T out_target, err_target;
+	union target out_target, err_target;
 
 	/* Beware: cute preprocessor shit */
 #ifdef WITH_CURSES
 	WINDOW *__restrict__ w[2];
 	if (flags & FLAG_CURSES) {
 		set_up_curses(w);
-		out_target = (target_T)w[0], err_target = (target_T)w[1];
+		cat_in_technicolour_ = curse_in_technicolour,
+		out_target.w = w[0], err_target.w = w[1];
 	} else
 #endif
-		out_target = STDOUT_FILENO, err_target = STDERR_FILENO;
+	if (flags & (FLAG_TIMESTAMPS | FLAG_PREFIX))
+		cat_in_technicolour_ = cat_in_technicolour_timestamps,
+		out_target.fp = stdout, err_target.fp = stderr;
+	else
+		cat_in_technicolour_ = cat_in_technicolour,
+		out_target.fd = STDOUT_FILENO, err_target.fd = STDERR_FILENO;
 
 	/* set pipes to nonblocking so that if we get more than BUFSIZ
 	 * bytes at once we can use read(2) to check if the pipe is empty
@@ -616,8 +600,9 @@ parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
 
 	if (WIFEXITED(child_ret)) {
 		const int ret = WEXITSTATUS(child_ret);
-		if (flags & FLAG_VERBOSE || (!(flags & FLAG_QUIET)
-                                             && ret != EXIT_SUCCESS)) {
+		if (flags & FLAG_VERBOSE
+		    || (!(flags & FLAG_QUIET) && ret != EXIT_SUCCESS))
+		{
 			if (*timebuf) fputs(timebuf, stderr);
 			warnx("%s exited with status %d", child, ret);
 		}
@@ -674,7 +659,7 @@ Options:\n\
 noreturn static void
 version(void)
 {
-	puts("ssss version 0.1, built " __DATE__
+	puts("ssss version 0.2, built " __DATE__
 #ifdef WITH_CURSES
 		", with the -S extension with"
 # ifndef WITH_CURSES_WIDE
