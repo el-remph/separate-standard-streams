@@ -68,7 +68,7 @@ all: ssss
 # its younger counterpart and see if it's lost any weight. Also cause I like
 # the filename ssss.s
 
-ssss: ssss.c compat__attribute__.h
+ssss: ssss.c compat__attribute__.h config.h
 ifdef ASM
 	$(CC) $(CPPFLAGS) $(CFLAGS) -S $<
 	$(CC) $(LDFLAGS) $@.s -o $@
@@ -79,5 +79,11 @@ ifndef DEBUG
 	strip $@
 endif
 
+config.h: configure.sh
+	./$<>$@ || { ret=$$?; rm -f $@; exit $$ret; }
+# ^ This removes config.h if configuration fails, to avoid a false positive
+# with a subsequent invocation of make, which could continue with a malformed
+# config.h
+
 clean:
-	@rm -fv ssss ssss.s
+	@rm -fv ssss ssss.s config.h

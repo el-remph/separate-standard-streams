@@ -23,15 +23,10 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  * (`PROG' according to --help). Best beware of this and keep it consistent
  *
  * TODO:
- ** POSIX recommends (but does not require) sys/time.h to include
- *  sys/select.h -- what are the odds of having the former but the latter
- *  failing to compile on a future system, compared to the odds of anyone
- *  finding a system old enough to not have sys/select.h? And who would get
- *  pissier about it?
  ** The curses thing doesn't use the scrollback buffer. I keep thinking
  *  that something like filter(3X) is the solution, then backing out. Pads
  *  are probably the way to go, but they'll need to be manually wrapped and
- *  grown
+ *  grown. How does `git diff' do it?
  ** waddnstr(3X) can't deal with embedded NUL chars, but waddch(3X) syncs
  *  we can't just call that iteratively. waddnstr(3X) also doesn't tell us
  *  where it left off (such as eg. strchrnul(3)) so we'd have to make a
@@ -47,10 +42,13 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
  *  doesn't have the latter, the program will silently compile fine without
  *  its functionality
- ** _POSIX_C_SOURCE>=2 for getopt(3) and iirc gettimeofday(2) and select(2),
+ ** _POSIX_C_SOURCE>=2 for getopt(3)
  ** _POSIX_C_SOURCE>=199309L for sigqueue(3) (optional, replaced with
  *  kill(2) if SA_SIGINFO is undefined, but you're pretty likely to have it)
- ** _POSIX_C_SOURCE>=200809L for strsignal(3) in glibc
+ ** Defined if applicable in config.h:
+ *** _POSIX_C_SOURCE=200809L for strsignal(3), or _BSD_SOURCE and
+ *   _DEFAULT_SOURCE for sys_siglist[]
+ *** _BSD_SOURCE and possibly _GNU_SOURCE for unlocked_stdio(3)
  *
  ** snprintf(3) is widely available and may be enabled by _BSD_SOURCE,
  *  _XOPEN_SOURCE>=500, or just ISO C99
@@ -62,19 +60,22 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  *  have either musl or uClibc, both of which provide <err.h>. So it might
  *  as well be standardised, and is much too useful to give up. Nevertheless,
  *  HP-UX and IBM AIX users beware! (maybe)
- ** Fucking strsignal(3) is such a bitch for compatibility, if you don't
- *  have it then -D'strsignal(s)=sys_siglist[s]'
  *
  * But *other* than all that, the code is fine with just _POSIX_C_SOURCE or
  * even _POSIX_SOURCE (though we don't define that cause glibc gripes about
  * that too) */
-#if _POSIX_C_SOURCE < 200809L
+#include "config.h" /* Must be before any other includes or test macros */
+
+#if _POSIX_C_SOURCE < 199309L
 #undef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 199309L
 #endif
 #if _XOPEN_SOURCE < 500
 #undef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 500
+#endif
+#ifdef WITH_CURSES_WIDE
+#define _XOPEN_SOURCE_EXTENDED
 #endif
 
 /* STDC */
@@ -88,8 +89,10 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #include <err.h>	/* Not actually POSIX but should be */
 #include <fcntl.h>	/* Actually fcntl(2), funnily enough */
 #include <signal.h>	/* sigaction(2), kill(2) */
-#include <sys/select.h>	/* old systems may need to delete this (the old
-			 * necessary header files are included anyway) */
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>	/* old systems require different includes, which
+			 * here are included anyway */
+#endif
 #include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
 #include <sys/types.h>	/* Big fat misc: ssize_t, wait(2), write(2), general
 			 * good practice, one change fewer for select(2) to
@@ -109,9 +112,6 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 
 # ifdef WITH_CURSES_WIDE
 #  include <wchar.h>	/* mbsrtowcs(3), wmemchr(3) */
-#  define NCURSES_WIDECHAR 1
-/* already defined _XOPEN_SOURCE=500, I think */
-#  define _XOPEN_SOURCE_EXTENDED
 #  define WADDNSTR waddnwstr
 #  define MEMCHR wmemchr
 typedef wchar_t curs_char_T;
@@ -154,9 +154,6 @@ typedef enum { false = 0, true = 1 } bool;
 #ifndef SA_RESETHAND
 #define SA_RESETHAND 0 /* ): */
 #endif
-#ifndef SA_SIGINFO
-#define SA_SIGINFO 0 /* ): */
-#endif
 
 #ifndef STDOUT_FILENO
 #define STDOUT_FILENO 1
@@ -174,7 +171,7 @@ typedef enum { false = 0, true = 1 } bool;
 #endif
 
 /* Take advantage of features where available */
-#if !defined(__GNUC__)
+#ifndef __GNUC__
 # if __STDC_VERSION__ >= 199901L
 #  define __inline__ inline
 #  define __restrict__ restrict
@@ -186,7 +183,7 @@ typedef enum { false = 0, true = 1 } bool;
 
 #if __STDC_VERSION__ >= 201100L
 # include <stdnoreturn.h>
-#elif defined(__WATCOMC__) /* My condolences */
+#elif defined(__DMC__) || defined(__WATCOMC__) /* My condolences */
 # define noreturn __declspec(noreturn)
 #else
 # define noreturn __attribute__((__noreturn__))
@@ -245,32 +242,59 @@ sprint_time(char *__restrict__ buf)
 		".%06ld] ", t.tv_usec);
 }
 
-static __inline__ void __attribute__((nonnull))
+static __inline__ int __attribute__((nonnull))
 mkprefix(const unsigned char flags, const int fd, char *__restrict__ prefixbuf)
 /* Based on flags and fd, writes a prefix to prefixbuf that should prefix
- * each buffalo in buffalo, eg. `[21:34:56.135429]&1 ' */
+ * each buffalo in buffalo, eg. `[21:34:56.135429]&1 '. Returns the length
+ * of the string written to prefixbuf, not including any terminating NUL if
+ * there is one, WHICH THERE MAY NOT BE. Do NOT rely on the string written
+ * to prefixbuf being NUL-terminated!
+ *
+ * Fair warning: this function is hyper-optimised
+ *
+ * If you're wondering about the gratituous use of fwrite(3) where fputs(3)
+ * might have been clearer, that's cause fputs_unlocked(3) is not so widely
+ * available (see configure.sh)
+ *
+ * The goto is to ensure that (flags & FLAG_PREFIX) is only tested once
+ * Think of it like
+ *	if (flags & FLAG_TIMESTAMPS && flags & FLAG_PREFIX)
+ *		...
+ *	else if (flags & FLAG_TIMESTAMPS)
+ *		...
+ *	else if (flags & FLAG_PREFIX)
+ *		...
+ * but marginally less mank
+ *
+ * TODO: a small thing, but we don't need to keep rechecking flags */
 {
-	*prefixbuf = '\0'; /* guarantee NUL termination just in case */
+	int i = 0;
 
 	if (flags & FLAG_TIMESTAMPS) {
 		sprint_time(prefixbuf);
-		prefixbuf += TIMESTAMP_SIZE - 2;
-		/* -2 so a subsequent write ^^^ will overwrite the trailing
-		 * space and NUL */
+		if (flags & FLAG_PREFIX) {
+			i += TIMESTAMP_SIZE - 2;
+			/* Overwrite trailing ^ space and NUL */
+			goto prefix;
+		} else
+			/* Don't include trailing NUL in return value */
+			return TIMESTAMP_SIZE - 1;
 	}
 
-	/* TODO: a small thing, but this doesn't need to keep being
-	 * recalculated */
 	if (flags & FLAG_PREFIX)
-		*prefixbuf++ = '&', *prefixbuf++ = fd + '0', /* Assumes that
+prefix:		prefixbuf[i++] = '&', prefixbuf[i++] = fd + '0', /* Assumes that
 		* fd < 10; if it isn't, then we're ^^^^^^^^ into punctuation */
-		*prefixbuf++ = ' ', *prefixbuf = '\0';
+		prefixbuf[i] = ' ';
+
+	return i;
 }
 
 /* TODO: the two prepend_lines functions need to be merged properly */
 
 static __inline__ void __attribute__((nonnull))
-prepend_lines(FILE *__restrict__ outstream, const char *__restrict__ prefixstr,
+prepend_lines(	FILE *__restrict__ outstream,
+		const char *__restrict__ prefixstr,
+		const int prefixn,
 		const char * unprinted __attribute__((nonstring)),
 		/* can't be^__restrict__ed because it's aliased in the function
 		 * body by newline_ptr */
@@ -280,7 +304,7 @@ prepend_lines(FILE *__restrict__ outstream, const char *__restrict__ prefixstr,
 
 	/* Look for a newline anywhere but the last char */
 	while ((newline_ptr = memchr(unprinted, '\n', n_unprinted - 1))) {
-		fputs(prefixstr, outstream);
+		fwrite(prefixstr, 1, prefixn, outstream);
 		newline_ptr++;
 		n_unprinted -= fwrite(unprinted,
 				1, newline_ptr - unprinted, outstream);
@@ -288,7 +312,7 @@ prepend_lines(FILE *__restrict__ outstream, const char *__restrict__ prefixstr,
 	}
 
 	/* Once any embedded newlines have been exhausted, print the rest */
-	fputs(prefixstr, outstream);
+	fwrite(prefixstr, 1, prefixn, outstream);
 	fwrite(unprinted, 1, n_unprinted, outstream);
 }
 
@@ -327,13 +351,19 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
-static
+static __inline__
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
-/* This one outputs to FILE* streams */
+/* This one outputs to FILE* streams
+ * FIXME: even with unlocked_stdio(3) this is a touch too slow
+ * Replaced stdio with straight kernel calls, which allowed replacing
+ * `goto's with `return's and avoiding fflush(3): I had one good moment but
+ * looks like that was a fluke, so that can't be the
+ * problem. curse_in_technicolour doesn't seem to be as bad as this one. So
+ * what's the difference? */
 {
 	ssize_t nread;
-	char prefixstr[TIMESTAMP_SIZE + 3];
-	char buf[BUFSIZ] __attribute__((nonstring));
+	char prefixstr[TIMESTAMP_SIZE + 3] __attribute__((nonstring)),
+		buf[BUFSIZ] __attribute__((nonstring));
 	bool ret = true;
 
 	/* While this does mean that flags must be rechecked every time this
@@ -342,10 +372,9 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 	const char *__restrict__ colour =
 		(flags & FLAG_COLOUR)
 			? (output_target.fp == stdout ? "\033[32m" : "\033[31m")
-			: "";
+			: NULL;
 	FILE * outstream = (flags & FLAG_ALLINONE) ? stdout : output_target.fp;
-
-	mkprefix(flags, fileno(output_target.fp), prefixstr);
+	const int prefixn = mkprefix(flags, fileno(output_target.fp), prefixstr);
 
 	do {
 		nread = read(ifd, buf, BUFSIZ);
@@ -359,17 +388,19 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 		case 0:	close(ifd); ret = false; goto end;
 
 		default:
-			fputs(colour, outstream);
-			prepend_lines(outstream, prefixstr, buf, nread);
+			if (colour) {
+				fwrite(colour, 1, 5, outstream);
+				colour = NULL; /* No need to keep writing colour */
+			}
+			prepend_lines(outstream, prefixstr, prefixn, buf, nread);
 		}
 	} while (nread == BUFSIZ);
 
-end:
-	fflush(outstream);
+end:	fflush(outstream);
 	return ret;
 }
 
-static
+static __inline__
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 /* This one outputs to unix file descriptors */
 {
@@ -390,7 +421,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 		/* First read will be a special case, reading into buf
 		 * starting after the prefix */
 		nread = read(ifd, buf + prefixn, BUFSIZ - prefixn);
-		if (nread > 0) nread += prefixn;
+		nread += prefixn * (nread > 0);
 		goto test_nread; /* Jump into the loop after the read,
 		* having done the special-case first read; subsequent
 		* iterations of the loop will do the regular first read */
@@ -414,7 +445,7 @@ test_nread:	switch (nread) {
 }
 
 #ifdef WITH_CURSES
-static
+static __inline__
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 /* This one outputs to WINDOW* objects */
 {
@@ -612,8 +643,12 @@ parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
 			if (*timebuf) fputs(timebuf, stderr);
 			if (WIFSIGNALED(child_ret)) {
 				const int sig = WTERMSIG(child_ret);
+#ifdef HAVE_STRSIGNAL
 				warnx("%s killed by signal %d: %s",
 					child, sig, strsignal(sig));
+#else
+				warnx("%s killed by signal %d", child, sig);
+#endif
 			} else
 				warn("%s wait(2) status unexpected: %d. errno says",
 					child, child_ret);
@@ -805,7 +840,7 @@ clean_up_colour()
 
 static void
 handle_bad_prog(int sig __attribute__((unused))
-#if SA_SIGINFO
+#ifdef SA_SIGINFO
 		, siginfo_t * si, void * ucontext __attribute__((unused))
 #endif
 		)
@@ -818,7 +853,7 @@ handle_bad_prog(int sig __attribute__((unused))
 	const pid_t piddle = wait(&child_ret);
 	if (WIFEXITED(child_ret)) {
 		errno = WEXITSTATUS(child_ret);
-#if SA_SIGINFO
+#ifdef SA_SIGINFO
 		err(-1, "%s", (char*)si->si_ptr);
 #else
 		err(-1, "can't exec command");
@@ -832,13 +867,13 @@ static __inline__ void
 setup_handle_bad_prog(void)
 {
 	struct sigaction handle_bad_prog_onsig;
-#if SA_SIGINFO
-	handle_bad_prog_onsig.sa_sigaction =
-#else
-	handle_bad_prog_onsig.sa_handler =
-#endif
-		handle_bad_prog;
+#ifdef SA_SIGINFO
+	handle_bad_prog_onsig.sa_sigaction = handle_bad_prog,
 	handle_bad_prog_onsig.sa_flags = SA_RESETHAND | SA_SIGINFO;
+#else
+	handle_bad_prog_onsig.sa_handler = handle_bad_prog,
+	handle_bad_prog_onsig.sa_flags = SA_RESETHAND;
+#endif
 	sigemptyset(&handle_bad_prog_onsig.sa_mask);
 	if (sigaction(SIGUSR1, &handle_bad_prog_onsig, NULL))
 		warn("sigaction(2)");
@@ -941,7 +976,7 @@ main(const int argc, char *const argv[])
 		/* If we're here, exec(3) failed; run to parent and tell */
 		{
 			const int er = errno;
-#if SA_SIGINFO
+#ifdef SA_SIGINFO
 			union sigval progname;
 			progname.sival_ptr = argv[optind];
 			sigqueue(getppid(), SIGUSR1, progname);
@@ -967,3 +1002,13 @@ main(const int argc, char *const argv[])
 		return parent_wait_for_child(argv[optind], flags);
 	}
 }
+
+/*
+ * WIP WIP WIP, that's some Work In Progress
+ * Local Variables:
+ * indent-tabs-mode: t
+ * c-basic-offset: 8
+ * c-offsets-alist: ((label . --) (case-label . 0) (statement-case-intro . +) (substatement . +) (statement-block-intro . +) (statement-cont +) (defun-block-intro . +) (arglist-cont-nonempty . ++) (c . 1) (cpp-macro . --))
+ * c-block-comment-prefix: "*"
+ * End:
+ */
