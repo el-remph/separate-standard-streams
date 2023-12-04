@@ -284,7 +284,7 @@ mkprefix(const unsigned char flags, const int fd, char *__restrict__ prefixbuf)
 	if (flags & FLAG_PREFIX)
 prefix:		prefixbuf[i++] = '&', prefixbuf[i++] = fd + '0', /* Assumes that
 		* fd < 10; if it isn't, then we're ^^^^^^^^ into punctuation */
-		prefixbuf[i] = ' ';
+		prefixbuf[i++] = ' ';
 
 	return i;
 }
@@ -293,14 +293,16 @@ prefix:		prefixbuf[i++] = '&', prefixbuf[i++] = fd + '0', /* Assumes that
 
 static __inline__ void __attribute__((nonnull))
 prepend_lines(	FILE *__restrict__ outstream,
-		const char *__restrict__ prefixstr,
-		const int prefixn,
 		const char * unprinted __attribute__((nonstring)),
 		/* can't be^__restrict__ed because it's aliased in the function
 		 * body by newline_ptr */
-		size_t n_unprinted)
+		size_t n_unprinted, const unsigned char flags)
 {
 	const char * newline_ptr = unprinted;
+	char prefixstr[TIMESTAMP_SIZE + 3] __attribute__((nonstring));
+	const int prefixn = mkprefix(flags, fileno(outstream), prefixstr);
+	/* Calls gettimeofday(2), ^ so must be called *after* read(2),
+	 * else it delays read(2) too long and fucks up the timing */
 
 	/* Look for a newline anywhere but the last char */
 	while ((newline_ptr = memchr(unprinted, '\n', n_unprinted - 1))) {
@@ -353,17 +355,10 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 
 static __inline__
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
-/* This one outputs to FILE* streams
- * FIXME: even with unlocked_stdio(3) this is a touch too slow
- * Replaced stdio with straight kernel calls, which allowed replacing
- * `goto's with `return's and avoiding fflush(3): I had one good moment but
- * looks like that was a fluke, so that can't be the
- * problem. curse_in_technicolour doesn't seem to be as bad as this one. So
- * what's the difference? */
+/* This one outputs to FILE* streams */
 {
 	ssize_t nread;
-	char prefixstr[TIMESTAMP_SIZE + 3] __attribute__((nonstring)),
-		buf[BUFSIZ] __attribute__((nonstring));
+	char buf[BUFSIZ] __attribute__((nonstring));
 	bool ret = true;
 
 	/* While this does mean that flags must be rechecked every time this
@@ -374,7 +369,6 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 			? (output_target.fp == stdout ? "\033[32m" : "\033[31m")
 			: NULL;
 	FILE * outstream = (flags & FLAG_ALLINONE) ? stdout : output_target.fp;
-	const int prefixn = mkprefix(flags, fileno(output_target.fp), prefixstr);
 
 	do {
 		nread = read(ifd, buf, BUFSIZ);
@@ -392,7 +386,7 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 				fwrite(colour, 1, 5, outstream);
 				colour = NULL; /* No need to keep writing colour */
 			}
-			prepend_lines(outstream, prefixstr, prefixn, buf, nread);
+			prepend_lines(outstream, buf, nread, flags);
 		}
 	} while (nread == BUFSIZ);
 

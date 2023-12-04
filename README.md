@@ -59,14 +59,12 @@ BUGS
 	compiler (509 bytes), but if you're using a very strictly ANSI
 	C-compliant compiler with a hard 509-byte string cutoff, you probably
 	have bigger problems
--	If printing timestamps or prefixes, this uses stdio buffered input,
-	which even when unlocked (see `unlocked_stdio(3)`) seems to be slow
-	enough that if the child process (PROG in -h output) exits quickly,
-	its output may be flushed to us all at once, which means the output
-	of each stream at the time of flushing will be printed each in one
-	block per stream rather than in the order it was written. For
-	example (with possible *not certain* outputs; can be influenced by
-	timing and kernel caching for instance):
+-	If the child process (PROG in -h output) exits quickly, its output
+	may be flushed to us all at once, which means the output of each
+	stream at the time of flushing will be printed each in one block
+	per stream rather than in the order it was written. For example
+	(with possible *not certain* outputs; can be influenced by timing
+	and kernel caching for instance):
 
 		$ ssss -p sh -c 'echo foo; echo bar >&2; echo yeedleyeedleyee'
 		&2 bar
@@ -78,11 +76,7 @@ BUGS
 		&2 bar
 		&1 yeedleyeedleyee
 
-	Perhaps a solution to this would be to implement each fd listener
-	in its own thread, though that introduces all sorts of other
-	considerations. I did try it, funnily enough, and still have the
-	remains of that code so maybe some comparative testing is what's
-	needed
+	As of recent bugfixes this behaviour is fairly sporadic.
 
 -	The curses thing is a WIP:
 	-	doesn't use scrollback buffer, so if output goes off screen
