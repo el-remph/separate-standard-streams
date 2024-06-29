@@ -1,6 +1,6 @@
 # make WITH_CURSES=1 to enable -S (bit shit, you have been warned)
 #
-# Configurable options: WITH_CURSES WITHOUT_UNICODE DEBUG ASM OPTIMISATION
+# Configurable options: WITH_CURSES WITHOUT_UNICODE DEBUG OPTIMISATION
 # CSTANDARD CWARNINGS, as well as the usual CC CPPFLAGS CFLAGS LDFLAGS. So:
 # 	$ make OPTIMISATION='-Ofast -march=native -mtune=native' CSTANDARD=-std=gnu89 CWARNINGS=-War
 #	cc -pipe -fwhole-program -Ofast -march=native -mtune=native -std=gnu89 -War ssss.c -o ssss
@@ -17,44 +17,49 @@
 #
 # Or for a debug build:
 #
-#	tcc -g -c ssss.c
-#	gcc ssss.o -o ssss
+#	tcc -DWITH_CURSES -g -c ssss.c
+#	gcc ssss.o -lcursesw -ltinfo -o ssss
 #
 # Sometimes pcc needs GNU cpp also. Don't forget to pass whatever -std you're
 # using to both:
 #	# Preprocess (.c -> .i):
-#	cpp -std=c99 -DWITH_CURSES -DDEBUG_MACROS ssss.c > ssss.i
+#	cpp -std=c99 -DWITH_CURSES ssss.c > ssss.i
 #	# Compile and assemble (.i -> .s -> .o)
 #	pcc -std=c99 -O1 -c ssss.i
 #	# Link
 #	gcc -lcurses -s ssss.o -o ssss
 
 
-CWARNINGS ?=-Wall -Wextra -Wno-implicit-fallthrough -Wno-overlength-strings
+CWARNINGS ?=-Wall -Wextra -Wno-implicit-fallthrough -Wno-overlength-strings -Winline
 # I would really rather not have to use -Wno-implicit-fallthrough here, but
 # I can't get -Wimplicit-fallthrough=n to work
+
+OBJS = ssss.o process_cmdline.o
 
 ifdef WITH_CURSES
         CPPFLAGS += -DWITH_CURSES
     ifdef WITHOUT_UNICODE
-        CURSLIBS ?=-lcurses -ltinfo
+        WREAD_H =
+        LDLIBS ?=-lcurses -ltinfo
     else
+        WREAD_H = wread.h
+        OBJS += wread.o
         CPPFLAGS += -DWITH_CURSES_WIDE
-        CURSLIBS ?=-lcursesw -ltinfo
+        LDLIBS ?=-lcursesw -ltinfo
     endif
-    LDFLAGS +=$(CURSLIBS)
 endif
 
 ifdef DEBUG
     # a dev build
-    CWARNINGS    += -Winline
     CSTANDARD    ?=-ansi -pedantic
-    OPTIMISATION ?=-Og -ggdb3
+    OPTIMISATION ?=-Og -ggdb3 -fstrict-aliasing -Wstrict-aliasing=1
+    LDFLAGS      ?= -flto
 else
     # Proper build -- don't define CSTANDARD (unless the user does on
     # the command line), let the compiler use everything it's got
     OPTIMISATION ?=-O2 -march=native -mtune=native
-    LDFLAGS      += -s
+    CPPFLAGS     ?= -DNDEBUG
+    LDFLAGS      ?= -flto -s
 endif
 
 CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
@@ -63,21 +68,15 @@ CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
 .PHONY = all clean
 
 all: ssss
-
-# `make ASM=1' leaves assembly droppings, so you can diff ssss.s against
-# its younger counterpart and see if it's lost any weight. Also cause I like
-# the filename ssss.s
-
-ssss: ssss.c compat__attribute__.h config.h
-ifdef ASM
-	$(CC) $(CPPFLAGS) $(CFLAGS) -S $<
-	$(CC) $(LDFLAGS) $@.s -o $@
-else
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< -o $@
-endif
+ssss: $(OBJS)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 ifndef DEBUG
 	strip $@
 endif
+
+ssss.o: ssss.c compat/__attribute__.h compat/bool.h config.h $(WREAD_H)
+process_cmdline.o: process_cmdline.c process_cmdline.h compat/__attribute__.h compat/bool.h config.h
+wread.o: wread.c wread.h compat/__attribute__.h config.h
 
 config.h: configure.sh
 	./$<>$@ || { ret=$$?; rm -f $@; exit $$ret; }
@@ -86,4 +85,4 @@ config.h: configure.sh
 # config.h
 
 clean:
-	@rm -fv ssss ssss.s config.h
+	@rm -fv ssss *.o config.h

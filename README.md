@@ -44,7 +44,7 @@ library; it should build straight away on any modern unix-like system
 There is an extra, WIP feature, printing stdout and stderr side-by-side,
 which requires curses, and can be enabled with `make WITH_CURSES=1`. This
 also requires libcursesw (or just libcurses if you're using netbsd-curses)
-and C99 for Unicode support; in the unlikely event that you are missing
+and C95 for Unicode support; in the unlikely event that you are missing
 either of those, Unicode support can be disabled with
 `make WITH_CURSES=1 WITHOUT_UNICODE=1`.
 
@@ -54,6 +54,7 @@ and `configure.sh`, and if you really need that then godspeed to you.
 
 BUGS
 ----
+
 -	Small caveat to ANSI C (ie. C89) conformance: the help message is a
 	bit longer than the minimum required string length of an ANSI C
 	compiler (509 bytes), but if you're using a very strictly ANSI
@@ -81,6 +82,17 @@ BUGS
 -	The curses thing is a WIP:
 	-	doesn't use scrollback buffer, so if output goes off screen
 		it's gone
-	-	can't handle input with embedded NUL chars
-	-	on netbsd-curses it still murderises your existing
-		scrollback
+	-	on netbsd-curses it still murderises output when the program
+		ends
+	-	The non-Unicode version can't handle input with embedded NUL
+		chars. This is a pretty minor issue
+
+TODO
+----
+
+Give up the ghost on curses scrollback (intractable) and make it print in
+simple columns instead, with gaps in each column where only the other has
+output. This could quite possibly be implemented without curses, using
+COLUMNS and LINES in the input where available, though this would be unable
+to handle SIGWINCH -- maybe we could make the column-printing thing
+configurable at compile-time whether or not it would use curses

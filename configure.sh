@@ -39,7 +39,7 @@ chat() {
 }
 
 # CC and feature_test_macros(7)
-CC="${CC:-cc}" define_GNU= define_BSD= define_POSIX2008= define_DARWIN=
+CC=${CC:-cc} define_GNU= define_BSD= define_POSIX2008= define_DARWIN=
 
 chat "running compiler: $CC"
 

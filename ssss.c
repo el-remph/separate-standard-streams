@@ -1,17 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-#define SPIEL "\
-ssss -- split standard streams: highlight the stdout and stderr of a process\n\
-Copyright 2023 the Remph\n\n\
-This is free software; permission is given to copy and/or distribute it,\n\
-with or without modification, under the terms of the GNU General Public\n\
-Licence, version 3 or later. For more information, see the GNU GPL, found\n\
-distributed with this in the file `GPL', and at https://gnu.org/licenses/gpl"
-
-#if 0
-static __inline__ void __attribute__((__noreturn__, nonnull))
-foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
-#endif
-/* ^ might have gone a bit heavy on that stuff, is what I'm saying
+/* SPDX-License-Identifier: GPL-3.0-or-later
  *
  * This program outputs into either unix file descriptors, stdio FILE*
  * streams, or curses WINDOW* objects, depending on the options it's called
@@ -23,11 +10,24 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  * (`PROG' according to --help). Best beware of this and keep it consistent
  *
  * TODO:
- ** The curses thing doesn't use the scrollback buffer. I keep thinking
- *  that something like filter(3X) is the solution, then backing out. Pads
- *  are probably the way to go, but they'll need to be manually wrapped and
- *  grown. How does `git diff' do it?
- ** waddnstr(3X) can't deal with embedded NUL chars, but waddch(3X) syncs
+ ** The curses thing doesn't use the scrollback buffer
+ *** I keep thinking that something like filter(3X) is the solution, then
+ *   backing out
+ *** Pads may be the way to go, but they'll need to be manually wrapped and
+ *   grown
+ *** GNU `less' and Linux `more' both do it by outputting the actual data
+ *   to stdout (occasionally stderr) and separately sending formatting
+ *   codes to the terminal with terminfo; this makes more sense when you're
+ *   transparently piping contiguous data to the terminal, as from a file
+ *   or pipeline; for formatted data as our split columns, we'll have to
+ *   keep a close eye on screen size and basically reimplement half of
+ *   curses
+ *** One way or another, I think this must need the cursor to backtrack
+ *   more than one line
+ **** Does this imply that in order to work with the scrollback, the cursor
+ *    will have to backtrack into the scrollback and edit there? (obviously
+ *    this is impossible)
+ ** waddnstr(3X) can't deal with embedded NUL chars, but waddch(3X) syncs so
  *  we can't just call that iteratively. waddnstr(3X) also doesn't tell us
  *  where it left off (such as eg. strchrnul(3)) so we'd have to make a
  *  second pass over the string with memchr(3) to find NUL, and restart
@@ -36,10 +36,20 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
  *  then call waddnstr(3X). That minimises calls to waddnstr(3X) but it's
  *  still one pass too many. Could make an option like -0 to `not break
  *  when input containing embedded NULs is passed,' but what the fuck is
- *  the use case for that? */
+ *  the use case for that?
+ *** Looks like this is provisionally fixed for widechar curses, but not
+ *   for pure ASCII curses. This may end up being a wontfix */
+
+#if 0
+__attribute__((__noreturn__, nonnull, __access__(write_only, 1, 2)))
+static __inline__ void
+foo(const size_t n,
+	const char *__restrict__ const bar __attribute__((nonstring)));
+/* ^ might have gone a bit heavy on that stuff, is what I'm saying */
+#endif
 
 /* feature_test_macros(7):
- ** _XOPEN_SOURCE>=500 needed for SA_RESETHAND, though if the system really
+ ** _XOPEN_SOURCE>=500 needed for SA_NODEFER, though if the system really
  *  doesn't have the latter, the program will silently compile fine without
  *  its functionality
  ** _POSIX_C_SOURCE>=2 for getopt(3)
@@ -79,50 +89,52 @@ foo(const unsigned char *__restrict__ bar __attribute__((nonstring)));
 #endif
 
 /* STDC */
+#include <assert.h>
 #include <errno.h>
 #include <locale.h>	/* setlocale(3) */
 #include <stdio.h>
-#include <stdlib.h>	/* exit(3), atexit(3) */
-#include <string.h>	/* memcpy(3), memchr(3); strcmp(3) in process_cmdline();
-			 * strsignal(3) */
+#include <stdlib.h>	/* atexit(3) */
+#include <string.h>	/* memcpy(3), memchr(3), strsignal(3) */
+
 /* POSIX */
 #include <err.h>	/* Not actually POSIX but should be */
 #include <fcntl.h>	/* Actually fcntl(2), funnily enough */
 #include <signal.h>	/* sigaction(2), kill(2) */
+#include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
+#include <sys/types.h>	/* ssize_t, wait(2), write(2), select(2)... */
+#include <sys/wait.h>	/* wait(2), dumbass */
+#include <time.h>	/* localtime(3), strftime(3) */
+#include <unistd.h>	/* pipe(2), dup2(2), fork(2), execvp(3), write(2),
+			 * read(2) */
+
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>	/* old systems require different includes, which
 			 * here are included anyway */
 #endif
-#include <sys/time.h>	/* gettimeofday(2); select(2) on old systems */
-#include <sys/types.h>	/* Big fat misc: ssize_t, wait(2), write(2), general
-			 * good practice, one change fewer for select(2) to
-			 * work on old systems... */
-#include <sys/wait.h>	/* wait(2), dumbass */
-#include <time.h>	/* localtime(3), strftime(3) */
-#include <unistd.h>	/* pipe(2), dup2(2), fork(2), execvp(3), getopt(3),
-			 * isatty(3), write(2), read(2) */
-
 
 #ifdef WITH_CURSES
 
 /* sidestep some -pedantic compiler warnings when -ansi */
-# ifdef __STRICT_ANSI__
+# if __STDC_VERSION__ < 199900L && defined __STRICT_ANSI__
 #  define NCURSES_ENABLE_STDBOOL_H 0
 # endif
 
+# include <curses.h>
+# include <term.h> /* putp(3X) and *_ca_mode used in set_up_curses */
+
 # ifdef WITH_CURSES_WIDE
-#  include <wchar.h>	/* mbsrtowcs(3), wmemchr(3) */
+#  include <wchar.h>	/* wmemchr(3) */
+#  include "wread.h"
 #  define WADDNSTR waddnwstr
 #  define MEMCHR wmemchr
+#  define READ(fd, buf) wread(fd, buf)
 typedef wchar_t curs_char_T;
 # else
 #  define WADDNSTR waddnstr
 #  define MEMCHR memchr
+#  define READ(fd, buf) read(fd, buf, BUFSIZ)
 typedef char curs_char_T;
 # endif /* with wide curses */
-
-# include <curses.h>
-# include <term.h> /* putp(3X) and *_ca_mode used in set_up_curses */
 
 /* Just make sure that true and false are definitely defined, since curses
  * only guarantees us TRUE and FALSE, but may also provide true and false
@@ -137,22 +149,18 @@ typedef char curs_char_T;
 #else /* without curses */
 
 /* If we have no curses, we need to find a bool of our own */
-# if __STDC_VERSION__ >= 199900L
-#  include <stdbool.h>
-# elif defined(__GNUC__) && !defined(__STRICT_ANSI__)
-#  define bool _Bool
-#  define true 1
-#  define false 0
-# else /* Neither -std=c99 nor -std=gnu89 */
-typedef enum { false = 0, true = 1 } bool;
-# endif /* -std=c99 or -std=gnu89 */
+# include "compat/bool.h"
+
 #endif /* with curses */
 
-#include "compat__attribute__.h" /* This must always be the last #include */
+#include "process_cmdline.h"
+/* These must always be the last <#include>s */
+#include "compat/inline-restrict.h"
+#include "compat/__attribute__.h"
 
 /* In case some macros aren't defined in those headers, on very old systems */
-#ifndef SA_RESETHAND
-#define SA_RESETHAND 0 /* ): */
+#ifndef SA_NODEFER
+#define SA_NODEFER 0 /* ): */
 #endif
 
 #ifndef STDOUT_FILENO
@@ -170,26 +178,6 @@ typedef enum { false = 0, true = 1 } bool;
 # endif
 #endif
 
-/* Take advantage of features where available */
-#ifndef __GNUC__
-# if __STDC_VERSION__ >= 199901L
-#  define __inline__ inline
-#  define __restrict__ restrict
-# else
-#  define __inline__
-#  define __restrict__
-# endif
-#endif
-
-#if __STDC_VERSION__ >= 201100L
-# include <stdnoreturn.h>
-#elif defined(__DMC__) || defined(__WATCOMC__) /* My condolences */
-# define noreturn __declspec(noreturn)
-#else
-# define noreturn __attribute__((__noreturn__))
-/* Beware using noreturn in functions with other __attribute__s */
-#endif
-
 union target {
 	int fd;
 	FILE * fp;
@@ -198,34 +186,11 @@ union target {
 #endif
 };
 
-/* Flag constants -- used to be macros, but it's useful to have them typed
- * just in case */
-#if __STDC_VERSION__ >= 202300L
-enum : unsigned char {
-#else
-const unsigned char
-#endif /* C23 */
-	FLAG_ALLINONE	= 1 << 0,
-	FLAG_TIMESTAMPS	= 1 << 1,
-	FLAG_COLOUR	= 1 << 2,
-	FLAG_PREFIX	= 1 << 3,
-	FLAG_VERBOSE	= 1 << 4,
-	FLAG_QUIET	= 1 << 5
-#ifdef WITH_CURSES
-	,FLAG_CURSES	= 1 << 6
-#endif /* with curses */
-#if __STDC_VERSION__ >= 202300L
-}
-#endif /* C23 */
-	;
-
 #define TIMESTAMP_SIZE (sizeof "[00:00:00.000000] ")
 
-static void __attribute__((nonnull))
-sprint_time(char *__restrict__ buf)
-/* buf must be TIMESTAMP_SIZE
- *
- * This uses gettimeofday(2) for compatibility with old systems, cause
+static void __attribute__((nonnull, __access__(write_only, 1)))
+sprint_time(char buf[TIMESTAMP_SIZE])
+/* This uses gettimeofday(2) for compatibility with old systems, cause
  * adoption of clock_gettime(2) was a bit of a minefield. It was POSIXed in
  * 1993, but the BSDs didn't implement it until the late 90s and Linux
  * didn't implement it for the better part of a decade, and then when it
@@ -242,8 +207,8 @@ sprint_time(char *__restrict__ buf)
 		".%06ld] ", t.tv_usec);
 }
 
-static __inline__ int __attribute__((nonnull))
-mkprefix(const unsigned char flags, const int fd, char *__restrict__ prefixbuf)
+static __inline__ size_t __attribute__((nonnull, __access__(write_only, 3)))
+mkprefix(const unsigned char flags, const int fd, char prefixbuf[TIMESTAMP_SIZE + 3])
 /* Based on flags and fd, writes a prefix to prefixbuf that should prefix
  * each buffalo in buffalo, eg. `[21:34:56.135429]&1 '. Returns the length
  * of the string written to prefixbuf, not including any terminating NUL if
@@ -268,7 +233,7 @@ mkprefix(const unsigned char flags, const int fd, char *__restrict__ prefixbuf)
  *
  * TODO: a small thing, but we don't need to keep rechecking flags */
 {
-	int i = 0;
+	size_t i = 0;
 
 	if (flags & FLAG_TIMESTAMPS) {
 		sprint_time(prefixbuf);
@@ -282,8 +247,8 @@ mkprefix(const unsigned char flags, const int fd, char *__restrict__ prefixbuf)
 	}
 
 	if (flags & FLAG_PREFIX)
-prefix:		prefixbuf[i++] = '&', prefixbuf[i++] = fd + '0', /* Assumes that
-		* fd < 10; if it isn't, then we're ^^^^^^^^ into punctuation */
+prefix:		prefixbuf[i++] = '&', prefixbuf[i++] = fd + '0', /* Assumes
+		* that fd < 10; if it isn't, then we're into punctuation */
 		prefixbuf[i++] = ' ';
 
 	return i;
@@ -291,16 +256,18 @@ prefix:		prefixbuf[i++] = '&', prefixbuf[i++] = fd + '0', /* Assumes that
 
 /* TODO: the two prepend_lines functions need to be merged properly */
 
-static __inline__ void __attribute__((nonnull))
-prepend_lines(	FILE *__restrict__ outstream,
-		const char * unprinted __attribute__((nonstring)),
-		/* can't be^__restrict__ed because it's aliased in the function
-		 * body by newline_ptr */
-		size_t n_unprinted, const unsigned char flags)
-{
-	const char * newline_ptr = unprinted;
+static __inline__ void __attribute__((nonnull, __access__(read_only, 2, 3)))
+prepend_lines (
+	FILE *__restrict__ const outstream,
+	const char *__restrict__ unprinted __attribute__((nonstring)),
+	/* I think  ^ this is probably maybe quite possibly OK */
+	size_t n_unprinted,
+	const unsigned char flags
+) {
+	const char *__restrict__ newline_ptr __attribute__((nonstring));
+	/* This one ^ also */
 	char prefixstr[TIMESTAMP_SIZE + 3] __attribute__((nonstring));
-	const int prefixn = mkprefix(flags, fileno(outstream), prefixstr);
+	const size_t prefixn = mkprefix(flags, fileno(outstream), prefixstr);
 	/* Calls gettimeofday(2), ^ so must be called *after* read(2),
 	 * else it delays read(2) too long and fucks up the timing */
 
@@ -319,8 +286,9 @@ prepend_lines(	FILE *__restrict__ outstream,
 }
 
 #ifdef WITH_CURSES
-static int /* int for waddnstr(3X) compatibility */ __attribute__((nonnull))
-prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
+/* int for waddnstr(3X) compatibility */
+static int __attribute__((nonnull, __access__(read_only, 2, 3)))
+prepend_lines_curses(WINDOW *__restrict__ const w, const curs_char_T * unprinted,
 		int /*waddnstr(3X) again*/ n_unprinted)
 {
 	const curs_char_T * newline_ptr = unprinted;
@@ -353,7 +321,7 @@ prepend_lines_curses(WINDOW *__restrict__ w, const curs_char_T * unprinted,
 /* Returns whether ifd is worth listening to anymore (ie. hasn't hit EOF).
  * Also, a whole C++ compiler just for type polymorphism? Bitch */
 
-static __inline__
+static
 CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 /* This one outputs to FILE* streams */
 {
@@ -368,7 +336,9 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour_timestamps)
 		(flags & FLAG_COLOUR)
 			? (output_target.fp == stdout ? "\033[32m" : "\033[31m")
 			: NULL;
-	FILE * outstream = (flags & FLAG_ALLINONE) ? stdout : output_target.fp;
+	FILE *const outstream = (flags & FLAG_ALLINONE) ? stdout : output_target.fp;
+
+	assert(output_target.fp == stdout || output_target.fp == stderr);
 
 	do {
 		nread = read(ifd, buf, BUFSIZ);
@@ -394,13 +364,13 @@ end:	fflush(outstream);
 	return ret;
 }
 
-static __inline__
+static
 CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 /* This one outputs to unix file descriptors */
 {
 	/* const everything */
 	const int ofd = (flags & FLAG_ALLINONE) ? STDOUT_FILENO : output_target.fd;
-	const char *__restrict__ colour =
+	const char *__restrict__ const colour =
 		(flags & FLAG_COLOUR)
 			? (output_target.fd == STDOUT_FILENO ? "\033[32m" : "\033[31m")
 			: "";
@@ -408,6 +378,8 @@ CAT_IN_TECHNICOLOUR(cat_in_technicolour) /* buffalo buffalo */
 	/* actual variables we'll be operating on, we need for io */
 	char buf[BUFSIZ] __attribute__((nonstring));
 	ssize_t nread;
+
+	assert(output_target.fd == STDOUT_FILENO || output_target.fd == STDERR_FILENO);
 
 	if (*colour) {
 		const size_t prefixn = 5; /* strlen(colour) */
@@ -439,47 +411,33 @@ test_nread:	switch (nread) {
 }
 
 #ifdef WITH_CURSES
-static __inline__
+static
 CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 /* This one outputs to WINDOW* objects */
 {
 	ssize_t nread;
-	int (*out_)(WINDOW*, const curs_char_T*, int) =
+	int (*const out_)(WINDOW*, const curs_char_T*, int) =
 		(flags & FLAG_TIMESTAMPS) ? prepend_lines_curses : WADDNSTR;
+
+	/* The following is to shutup the gcc */
 # ifndef WITH_CURSES_WIDE
-	/* If we're WIDE then buf is passed to mbsrtowcs(3), so must be
-	 * ASCIZ; else goes straight out_() */
 	__attribute__((nonstring))
 # endif
-	char buf[BUFSIZ];
+	curs_char_T buf[BUFSIZ];
 
 	do {
-		nread = read(ifd, buf, sizeof buf
-# ifdef WITH_CURSES_WIDE
-			- 1 /* for NUL */
-# endif
-		);
+		nread = READ(ifd, buf);
 		switch (nread) {
 		case -1:
 			if (errno == EAGAIN)
 				return true;
 			else
 				err(-1, "read(2)");
-		case 0:	close(ifd); return false;
+		case 0:
+			close(ifd);
+			return false;
 		default:
-# ifdef WITH_CURSES_WIDE
-			buf[nread] = '\0'; /* Hence BUFSIZ - 1 above */
-			{
-				const char * ptr = buf;
-				wchar_t wbuf[BUFSIZ];
-				const size_t fet =
-					mbsrtowcs(wbuf, &ptr, BUFSIZ, NULL);
-				if (fet == (size_t)-1) err(-1, "input");
-				out_(output_target.w, wbuf,fet/* wobuffet! */);
-			}
-# else
 			out_(output_target.w, buf, nread);
-# endif
 			wnoutrefresh(output_target.w);
 		}
 	} while (nread == BUFSIZ);
@@ -488,7 +446,7 @@ CAT_IN_TECHNICOLOUR(curse_in_technicolour)
 }
 
 static void __attribute__((nonnull))
-set_up_curses_window(WINDOW *__restrict__ w, const short colour_pair)
+set_up_curses_window(WINDOW *__restrict__ const w, const short colour_pair)
 {
 	idlok(w, true);
 	scrollok(w, true);
@@ -505,8 +463,7 @@ set_up_curses_window(WINDOW *__restrict__ w, const short colour_pair)
 }
 
 static __inline__ void __attribute__((nonnull))
-set_up_curses(WINDOW *__restrict__ *__restrict__ window)
-/* window must be an array of exactly two WINDOW pointers */
+set_up_curses(WINDOW *__restrict__ window[2])
 {
 	/* just a cast to shut up the compiler */
 	atexit((void (*)(void))endwin);
@@ -517,7 +474,8 @@ set_up_curses(WINDOW *__restrict__ *__restrict__ window)
 	 * the FSF, although I take full responsibility for omitting what
 	 * looked like quite important defensive code cause I cba. I'm sure
 	 * in time I'll be even sorrier for that */
-	refresh();
+	refresh();	/* is this really necessary? I think Dickey might
+			 * have done it to flush things like cbreak(3X) */
 	putp(exit_ca_mode);
 	fflush(stdout);
 	enter_ca_mode = NULL, exit_ca_mode = NULL;
@@ -545,38 +503,40 @@ static __inline__ void
 parent_listen(const int child_out, const int child_err,
 		const unsigned char flags)
 {
-	/* If -t|-p, points to a more compicated function that uses stdio;
-	 * else points to a slimmer one using only unix io */
-	CAT_IN_TECHNICOLOUR((*cat_in_technicolour_));
-
 	/* whether the respective stream is still worth watching -- a bit
 	 * array of the file descriptors OR'd together. Clever, hey? No */
-	unsigned char watch = STDOUT_FILENO | STDERR_FILENO;
+	int watch = STDOUT_FILENO | STDERR_FILENO;
 
 	/* ugly stuff for C ```polymorphism''' */
 	union target out_target, err_target;
 
-	/* Beware: cute preprocessor shit */
+	/* If -t|-p, points to a more compicated function that uses stdio;
+	 * else points to a slimmer one using only unix io */
+	CAT_IN_TECHNICOLOUR((*const cat_in_technicolour_)) =
+#ifdef WITH_CURSES
+		flags & FLAG_CURSES ? curse_in_technicolour :
+#endif
+		flags & (FLAG_TIMESTAMPS | FLAG_PREFIX)
+			? cat_in_technicolour_timestamps
+			: cat_in_technicolour;
+
+	/* Beware: cute preprocessor shit. Also, these tests are the same
+	 * as those above but for C variable declaration reasons they are
+	 * tricky to merge, so: Mr. Compiler, optimise these please and
+	 * thank you */
 #ifdef WITH_CURSES
 	WINDOW *__restrict__ w[2];
-	if (flags & FLAG_CURSES) {
+	if (cat_in_technicolour_ == curse_in_technicolour) {
 		set_up_curses(w);
-		cat_in_technicolour_ = curse_in_technicolour,
 		out_target.w = w[0], err_target.w = w[1];
 	} else
 #endif
-	if (flags & (FLAG_TIMESTAMPS | FLAG_PREFIX))
-		cat_in_technicolour_ = cat_in_technicolour_timestamps,
+	if (cat_in_technicolour_ == cat_in_technicolour_timestamps)
 		out_target.fp = stdout, err_target.fp = stderr;
-	else
-		cat_in_technicolour_ = cat_in_technicolour,
+	else {
+		assert(cat_in_technicolour_ == cat_in_technicolour);
 		out_target.fd = STDOUT_FILENO, err_target.fd = STDERR_FILENO;
-
-	/* set pipes to nonblocking so that if we get more than BUFSIZ
-	 * bytes at once we can use read(2) to check if the pipe is empty
-	 * or not, in *cat_in_technicolour_ */
-	fcntl(child_out, F_SETFL, O_NONBLOCK);
-	fcntl(child_err, F_SETFL, O_NONBLOCK);
+	}
 
 	do {
 		fd_set fds;
@@ -612,7 +572,7 @@ parent_listen(const int child_out, const int child_err,
 }
 
 static __inline__ int __attribute__((nonnull))
-parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
+parent_wait_for_child(const char *__restrict__ const child, const unsigned char flags)
 /* Clean up after child (common parenting experience). Returns $? */
 {
 	int child_ret;
@@ -620,21 +580,24 @@ parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
 
 	wait(&child_ret);
 
-	if (flags & FLAG_TIMESTAMPS && !(flags & FLAG_QUIET))
+	if (flags & FLAG_TIMESTAMPS && ~flags & FLAG_QUIET)
 		sprint_time(timebuf);
 
 	if (WIFEXITED(child_ret)) {
 		const int ret = WEXITSTATUS(child_ret);
 		if (flags & FLAG_VERBOSE
-		    || (!(flags & FLAG_QUIET) && ret != EXIT_SUCCESS))
+		    || (~flags & FLAG_QUIET && ret != EXIT_SUCCESS))
 		{
-			if (*timebuf) fputs(timebuf, stderr);
+			if (*timebuf)
+				fputs(timebuf, stderr);
 			warnx("%s exited with status %d", child, ret);
 		}
 		return ret;
 	} else {
-		if (!(flags & FLAG_QUIET)) {
-			if (*timebuf) fputs(timebuf, stderr);
+		if (~flags & FLAG_QUIET) {
+			if (*timebuf)
+				fputs(timebuf, stderr);
+
 			if (WIFSIGNALED(child_ret)) {
 				const int sig = WTERMSIG(child_ret);
 #ifdef HAVE_STRSIGNAL
@@ -647,176 +610,9 @@ parent_wait_for_child(const char *__restrict__ child, const unsigned char flags)
 				warn("%s wait(2) status unexpected: %d. errno says",
 					child, child_ret);
 		}
+
 		return child_ret; /* *Not* sig -- more conventional */
 	}
-}
-
-noreturn static void
-usage(const char *__restrict__ progname)
-{
-	static const char help[] = "\
-Usage: %s [OPT(s)] PROG [PROGARG(s)]\n\
-Runs PROG with PROGARG(s) if any, and marks which of the output is stdout\n\
-and which is stderr. Returns PROG's exit status\n\
-Options:\n\
-	-1	Output everything to one stream, stdout. Equivalent of piping\n\
-		through |& in bash\n\
-	-2	Output PROG's stdout->stdout and stderr->stderr (default)\n\
-	-A OPTS	Set any applicable option characters in OPTS (/(?i)[cp]/) to\n\
-		auto-detect their values (ie. default settings)\n\
-	-c	Colour output (default: if output isatty(3))\n\
-	-C	Turn off -c\n\
-	-p	Prefix lines with the fd whence they came (default: if\n\
-		output isn't coloured)\n\
-	-P	Turn off -p\n"
-#ifdef WITH_CURSES
-"	-S	Print streams side-by-side, using curses (bit of a WIP). Note\n\
-		also that -[12ACcPp] are (mostly) silently ignored if this\n\
-		flag is passed\n"
-#endif
-"	-t	Add timestamps\n\
-	-q	Quiet -- don't print anything of our own, just get busy\n\
-		transforming the output of PROG\n\
-	-v	Verbose -- print more\n\
-	--help, -h	Print this help\n\
-	--version, -V	Print version information\n";
-
-	printf(help, progname);
-	exit(EXIT_SUCCESS);
-}
-
-noreturn static void
-version(void)
-{
-	puts("ssss version 0.2, built " __DATE__
-#ifdef WITH_CURSES
-		", with the -S extension with"
-# ifndef WITH_CURSES_WIDE
-		"out"
-# endif
-		" UTF-8 support"
-#endif
-		"\n" SPIEL);
-	exit(EXIT_SUCCESS);
-}
-
-static unsigned char
-process_cmdline(const int argc, char *const argv[])
-/* Returns flags */
-{
-	static const char optstr[] = "+12A:CPVchpqtv"
-	/* The + at the beginning is  ^ for GNU getopt(3), to let us pass
-	 * options to PROG (else it permutes them away to us)
-	 *
-	 * Note also lack of semicolon, that's to faciliate this: */
-#ifdef WITH_CURSES
-		"S"
-#endif
-	; /* And *now*, the semicolon */
-
-	unsigned char flags = 0;
-	enum { ON, OFF, AUTO } colour = AUTO, prefix = AUTO;
-
-	/* hacky support for --help and --version */
-	if (argv[1] && argv[1][0] == '-') {
-		const char * longname = argv[1] + 1 + !!(argv[1][1] == '-');
-		if (strcmp(longname, "help") == 0)
-			usage(argv[0]);
-		if (strcmp(longname, "version") == 0)
-			version();
-	}
-
-	for (;;) {
-		const int o = getopt(argc, argv, optstr);
-		if (o == -1) break;
-		switch (o) {
-		case '1':	flags |=  FLAG_ALLINONE; break;
-		case '2':	flags &= ~FLAG_ALLINONE; break;
-		case 'A':
-			for (; *optarg; optarg++)
-				switch (*optarg) {
-				case 'C': case 'c': colour = AUTO; break;
-				case 'P': case 'p': prefix = AUTO; break;
-				default: errx(-1, "invalid: -A %c", *optarg);
-				}
-			break;
-		case 'C':	colour = OFF; break;
-		case 'P':	prefix = OFF; break;
-#ifdef WITH_CURSES
-		case 'S':	flags |= FLAG_CURSES; break;
-#endif
-		case 'V':	version();
-		case 'c':	colour = ON;  break;
-		case 'h':	usage(argv[0]);
-		case 'p':	prefix = ON;  break;
-		case 'q':	flags |= FLAG_QUIET; break;
-		case 't': 	flags |= FLAG_TIMESTAMPS; break;
-		case 'v':	flags |= FLAG_VERBOSE; break;
-
-		case '+':
-			/* Provide an error message for -+ on non-GNU
-			 * systems. It'll fail notwithstanding, just
-			 * don't want it to fail silently */
-			warnx("invalid option -- +");
-			/* fallthrough */
-		default:	exit(-1);
-		}
-	}
-
-	if (argc - optind == 0)
-		errx(-1, "not enough arguments");
-
-	if ((flags & FLAG_QUIET) && (flags & FLAG_VERBOSE))
-		errx(-1, "Can't specify both -q and -v"); /* Because I say so */
-
-#ifdef WITH_CURSES
-	if (flags & FLAG_CURSES) {
-		/* quarter-arsed attempt to warn the user for options that
-		 * conflict with -S */
-		const char optwarning[] = "-%c is ignored when -S is specified";
-		if (flags & FLAG_ALLINONE)
-			warnx(optwarning, '1');
-		switch (prefix) {
-			case AUTO: break; /* no worries */
-			case OFF:  warnx(optwarning, 'P'); break;
-			case ON:   warnx(optwarning, 'p'); break;
-		}
-		switch (colour) {
-			case AUTO: break; /* no worries */
-			case OFF:  warnx(optwarning, 'C'); break;
-			case ON:   warnx(optwarning, 'c'); break;
-		}
-
-		return flags; /* No need to work on -p or -c */
-	}
-#endif /* with curses */
-
-	/* Hey man, come take a look at this. You here about the compiler
-	 * warnings? Yeah, don't bother yourself with them, buncha squares. I
-	 * just tune em out. Anyway, come get a load of this shit, it'll
-	 * blow your fuckin mind, man
-	 *
-	 * I'm so fucking far ahead, man, I'm pretty sure the compiler
-	 * literally cannot understand this, it needs at least a null
-	 * statement just to begin to understand this kind of shit but
-	 * *there is no null statement*, that's the fucking point! I'm going
-	 * places the compiler can't follow! */
-	switch (colour) {
-	case AUTO:
-		if (flags & FLAG_ALLINONE ? isatty(1) : isatty(1) && isatty(2))
-	case ON:	flags |= FLAG_COLOUR;
-		else
-	case OFF:	flags &= ~FLAG_COLOUR;
-	}
-	switch (prefix) {
-	case AUTO:
-		if (flags & FLAG_COLOUR)
-	case OFF:	flags &= ~FLAG_PREFIX;
-		else
-	case ON:	flags |= FLAG_PREFIX;
-	}
-
-	return flags; /* told you so */
 }
 
 static void
@@ -826,16 +622,15 @@ clean_up_colour()
 {
 	static bool already_done = false;
 	if (!already_done) {
-		fputs("\033[m", stdout);
-		fflush(stdout);
+		write(STDOUT_FILENO, "\033[m", 3);
 		already_done = true;
 	}
 }
 
-static void
+static void __attribute__((cold))
 handle_bad_prog(int sig __attribute__((unused))
 #ifdef SA_SIGINFO
-		, siginfo_t * si, void * ucontext __attribute__((unused))
+		, siginfo_t *const si, void * ucontext __attribute__((unused))
 #endif
 		)
 /* signal handler, set up by setup_handle_bad_prog, to see if the child
@@ -863,10 +658,10 @@ setup_handle_bad_prog(void)
 	struct sigaction handle_bad_prog_onsig;
 #ifdef SA_SIGINFO
 	handle_bad_prog_onsig.sa_sigaction = handle_bad_prog,
-	handle_bad_prog_onsig.sa_flags = SA_RESETHAND | SA_SIGINFO;
+	handle_bad_prog_onsig.sa_flags = SA_NODEFER | SA_SIGINFO;
 #else
 	handle_bad_prog_onsig.sa_handler = handle_bad_prog,
-	handle_bad_prog_onsig.sa_flags = SA_RESETHAND;
+	handle_bad_prog_onsig.sa_flags = SA_NODEFER;
 #endif
 	sigemptyset(&handle_bad_prog_onsig.sa_mask);
 	if (sigaction(SIGUSR1, &handle_bad_prog_onsig, NULL))
@@ -874,10 +669,13 @@ setup_handle_bad_prog(void)
 }
 
 static __inline__ void __attribute__((nonnull))
-child_prepare(const char *__restrict__ cmd, const unsigned char flags,
-		int *__restrict__ child_stdout,
-		int *__restrict__ child_stderr)
-/* int pointers are to arrays of exactly 2 ints */
+child_prepare(const char *__restrict__ const cmd, const unsigned char flags,
+		const int child_stdout[2], const int child_stderr[2])
+/* tried
+	const int (*__restrict__ const child_stdout)[2]
+ * and all that, to get those pointers restricted, but it violates ANSI/ISO
+ * and more importantly doesn't seem to make any difference to the assembly
+ * even with -Og -fstrict-aliasing */
 {
 	/* Close read ends, we're reading from the child so the
 	 * child is not to read from the parent */
@@ -893,9 +691,9 @@ child_prepare(const char *__restrict__ cmd, const unsigned char flags,
 		if (flags & FLAG_TIMESTAMPS) {
 			char buf[TIMESTAMP_SIZE];
 			sprint_time(buf);
-			fputs(buf, stderr);
-		}
-		warnx("starting %s", cmd); /* TODO: ripoffline(3X)? */
+			warnx("%sstarting %s", buf, cmd);
+		} else
+			warnx("starting %s", cmd); /* TODO: ripoffline(3X)? */
 		fflush(stderr);
 	}
 
@@ -904,20 +702,24 @@ child_prepare(const char *__restrict__ cmd, const unsigned char flags,
 
 static __inline__ void __attribute__((nonnull))
 parent_prepare(const unsigned char flags,
-		int *__restrict__ child_stdout,
-		int *__restrict__ child_stderr)
-/* int pointers are to arrays of exactly 2 ints */
+		const int child_stdout[2], const int child_stderr[2])
 {
 	/* Inverse of the child process' close(2) calls */
 	close(child_stdout[1]);
 	close(child_stderr[1]);
 
+	/* set pipes to nonblocking so that if we get more than BUFSIZ
+	 * bytes at once we can use read(2) to check if the pipe is empty
+	 * or not, in cat_in_technicolour etc. */
+	fcntl(child_stdout[0], F_SETFL, O_NONBLOCK);
+	fcntl(child_stderr[0], F_SETFL, O_NONBLOCK);
+
 	/* Last point before colour may be output; take the opportunity to
 	 * register clean_up_colour if necessary */
 	if (flags & FLAG_COLOUR) {
 		struct sigaction clean_up_colour_onsig;
-		clean_up_colour_onsig.sa_handler = clean_up_colour,
-		clean_up_colour_onsig.sa_flags = SA_RESETHAND;
+		clean_up_colour_onsig.sa_handler = (void (*)(int))clean_up_colour,
+		clean_up_colour_onsig.sa_flags = SA_NODEFER;
 		sigemptyset(&clean_up_colour_onsig.sa_mask);
 		if (sigaction(SIGINT, &clean_up_colour_onsig, NULL))
 			warn("sigaction(2)");
@@ -932,18 +734,18 @@ parent_prepare(const unsigned char flags,
 	 * Also, beware: more preprocessor sophistry */
 	if (
 #ifdef WITH_CURSES
-		!(flags & FLAG_CURSES) &&
+		~flags & FLAG_CURSES &&
 #endif
 		(flags & (FLAG_TIMESTAMPS | FLAG_PREFIX)))
 	{
 		setvbuf(stdout, NULL, _IOFBF, 0);
-		if (!(flags & FLAG_ALLINONE))
+		if (~flags & FLAG_ALLINONE)
 			setvbuf(stderr, NULL, _IOFBF, 0);
 	}
 }
 
 int
-main(const int argc, char *const argv[])
+main(const int argc, char *const *const argv)
 {
 	int child_stdout[2], child_stderr[2];
 	const unsigned char flags = process_cmdline(argc, argv);
