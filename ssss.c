@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later
+/* SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * This program outputs into either unix file descriptors, stdio FILE*
  * streams, or curses WINDOW* objects, depending on the options it's called

@@ -1,4 +1,7 @@
-/* Damn, this really is what wide-oriented stdio is for */
+/* SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Damn, this really is what wide-oriented stdio is for */
 
 #include "config.h"
 

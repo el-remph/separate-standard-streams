@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+   SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef PROCESS_CMDLINE_H
 #define PROCESS_CMDLINE_H
 

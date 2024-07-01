@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+   SPDX-License-Identifier: GPL-3.0-or-later */
 #include "config.h" /* Must be before any other includes or test macros */
 
 #include  <stdio.h> /* puts(3), printf(3), fprintf(3) */
@@ -71,7 +73,7 @@ version(void)
 #endif
 		"\n\
 ssss -- split standard streams: highlight the stdout and stderr of a process\n\
-Copyright 2023 the Remph\n\n\
+Copyright 2023-2024 the Remph\n\n\
 This is free software; permission is given to copy and/or distribute it,\n\
 with or without modification, under the terms of the GNU General Public\n\
 Licence, version 3 or later. For more information, see the GNU GPL, found\n\

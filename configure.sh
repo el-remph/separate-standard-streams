@@ -1,4 +1,6 @@
 #!/bin/sh -e
+# SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # -*- indent-tabs-mode: t; sh-basic-offset: 8; fill-column: 75 -*-
 #
 # Supported in this script:

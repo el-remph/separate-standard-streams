@@ -1,5 +1,6 @@
-/* SPDX-License-Identifier: FSFULLRWD
- * Copyright 2023 the Remph
+/* SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+ * SPDX-License-Identifier: FSFULLRWD
+ *
  * This file is free software; the Remph gives unlimited permission to copy
  * and/or distribute it, with or without modification, as long as this
  * notice is preserved.
@@ -35,12 +36,19 @@
 #if (defined(__GNUC__) || defined(__PCC__) || defined(__TINYC__) || \
      defined(__IBMC__) || defined(__has_attribute) || defined(__attribute__))
 /* do nothing (__attribute__(()) is supported) */
-#elif __STDC_VERSION__ >= 202300L
-# define do__attribute__(...) [[using gnu: __VA_ARGS__]]
+
+#elif __STDC_VERSION__ >= 202000L || __cplusplus >= 201100L
+# if __cplusplus >= 201700L
+#  define do__attribute__(...) [[using gnu: __VA_ARGS__]]
+# else
+#  define do__attribute__(...) [[__VA_ARGS__]]
+# endif
 # define __attribute__(a) do__attribute__ a  /* strips parens (gnarly) */
+
 #else
 # define __attribute__(a)
 # undef HAVE___ATTRIBUTE__
+
 #endif
 
 #endif /* COMPAT__ATTRIBUTE___H */

@@ -1,7 +1,7 @@
 <!-- -*- fill-column: 75; tab-width: 8; -*- -->
 
-ssss (**s**eparate **s**tandard **s**tream**s**)
-================================================
+ssss (*s*eparate *s*tandard *s*tream*s*)
+========================================
 
 This is to visually separate stdout and stderr by printing each with its own
 colour, or if colour isn't possible, then by prefixing each line with the
@@ -52,6 +52,14 @@ For usage, run it with `-h`. For more information about system
 compatibility and dependencies, see comments in the source (near the top)
 and `configure.sh`, and if you really need that then godspeed to you.
 
+Copyright
+---------
+
+Copyright &copy; 2023-2024 The Remph. This is free software: file-specific
+licence information is contained in SPDX headers at the top of each file,
+and the full GPL text is in the file [GPL](./GPL), or at
+<https://gnu.org/licenses/gpl.txt>.
+
 BUGS
 ----
 
@@ -77,7 +85,7 @@ BUGS
 		&2 bar
 		&1 yeedleyeedleyee
 
-	As of recent bugfixes this behaviour is fairly sporadic.
+	As of commit `f33db16e` this behaviour is fairly sporadic.
 
 -	The curses thing is a WIP:
 	-	doesn't use scrollback buffer, so if output goes off screen

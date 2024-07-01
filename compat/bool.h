@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText:  2023-2024 The Remph <lhr@disroot.org>
+   SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef COMPAT_BOOL_H
 #define COMPAT_BOOL_H
 
