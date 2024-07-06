@@ -1,7 +1,5 @@
-# make WITH_CURSES=1 to enable -S (bit shit, you have been warned)
-#
-# Configurable options: WITH_CURSES WITHOUT_UNICODE DEBUG OPTIMISATION
-# CSTANDARD CWARNINGS, as well as the usual CC CPPFLAGS CFLAGS LDFLAGS. So:
+# Configurable options: DEBUG OPTIMISATION CSTANDARD CWARNINGS, as well as
+# the usual CC CPPFLAGS CFLAGS LDFLAGS. So:
 # 	$ make OPTIMISATION='-Ofast -march=native -mtune=native' CSTANDARD=-std=gnu89 CWARNINGS=-War
 #	cc -pipe -fwhole-program -Ofast -march=native -mtune=native -std=gnu89 -War ssss.c -o ssss
 # 	$ make CFLAGS='-Ofast -march=native -mtune=native -std=gnu89 -War'
@@ -17,37 +15,26 @@
 #
 # Or for a debug build:
 #
-#	tcc -DWITH_CURSES -g -c ssss.c
-#	gcc ssss.o -lcursesw -ltinfo -o ssss
+#	tcc -g -c ssss.c
+#	gcc ssss.o -o ssss
 #
 # Sometimes pcc needs GNU cpp also. Don't forget to pass whatever -std you're
 # using to both:
 #	# Preprocess (.c -> .i):
-#	cpp -std=c99 -DWITH_CURSES ssss.c > ssss.i
+#	cpp -std=c99 ssss.c > ssss.i
 #	# Compile and assemble (.i -> .s -> .o)
 #	pcc -std=c99 -O1 -c ssss.i
 #	# Link
-#	gcc -lcurses -s ssss.o -o ssss
+#	gcc -s ssss.o -o ssss
+#	# Or mayhaps:
+#	cpp -std=c99 ssss.c | pcc -std=c99 -O1 -c -o - - | gcc -s -x c -o ssss -
 
 
 CWARNINGS ?=-Wall -Wextra -Wno-implicit-fallthrough -Wno-overlength-strings -Winline
 # I would really rather not have to use -Wno-implicit-fallthrough here, but
 # I can't get -Wimplicit-fallthrough=n to work
 
-OBJS = ssss.o process_cmdline.o
-
-ifdef WITH_CURSES
-        CPPFLAGS += -DWITH_CURSES
-    ifdef WITHOUT_UNICODE
-        WREAD_H =
-        LDLIBS ?=-lcurses -ltinfo
-    else
-        WREAD_H = wread.h
-        OBJS += wread.o
-        CPPFLAGS += -DWITH_CURSES_WIDE
-        LDLIBS ?=-lcursesw -ltinfo
-    endif
-endif
+OBJS = ssss.o process_cmdline.o timestamp.o column-in-technicolour.o
 
 ifdef DEBUG
     # a dev build
@@ -74,9 +61,14 @@ ifndef DEBUG
 	strip $@
 endif
 
-ssss.o: ssss.c compat/__attribute__.h compat/bool.h config.h $(WREAD_H)
-process_cmdline.o: process_cmdline.c process_cmdline.h compat/__attribute__.h compat/bool.h config.h
-wread.o: wread.c wread.h compat/__attribute__.h config.h
+# The former by design, the latter by coincidence
+$(OBJS): config.h compat/__attribute__.h
+
+# Basically every object except ssss.o
+column-in-technicolour.o process_cmdline.o timestamp.o: %.o: %.h
+
+ssss.o process_cmdline.o: compat/bool.h
+ssss.o column-in-technicolour.o process_cmdline.o: compat/inline-restrict.h
 
 config.h: configure.sh
 	./$<>$@ || { ret=$$?; rm -f $@; exit $$ret; }
@@ -85,4 +77,4 @@ config.h: configure.sh
 # config.h
 
 clean:
-	@rm -fv ssss *.o config.h
+	@rm -fv ssss $(OBJS) config.h

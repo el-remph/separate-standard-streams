@@ -12,15 +12,13 @@ enum : unsigned char {
 #else
 static const unsigned char
 #endif /* C23 */
-	FLAG_ALLINONE   = 1 << 0,
-	FLAG_TIMESTAMPS = 1 << 1,
-	FLAG_COLOUR     = 1 << 2,
-	FLAG_PREFIX     = 1 << 3,
-	FLAG_VERBOSE    = 1 << 4,
-	FLAG_QUIET      = 1 << 5
-#ifdef WITH_CURSES
-	,FLAG_CURSES    = 1 << 6
-#endif /* with curses */
+	FLAG_ALLINONE	= 1 << 0,
+	FLAG_TIMESTAMPS	= 1 << 1,
+	FLAG_COLOUR	= 1 << 2,
+	FLAG_PREFIX	= 1 << 3,
+	FLAG_VERBOSE	= 1 << 4,
+	FLAG_QUIET	= 1 << 5,
+	FLAG_COLUMNS	= 1 << 6
 #if __STDC_VERSION__ >= 202300L
 }
 #endif /* C23 */

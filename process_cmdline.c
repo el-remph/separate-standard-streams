@@ -43,13 +43,11 @@ Options:\n\
 	-C	Turn off -c\n\
 	-p	Prefix lines with the fd whence they came (default: if\n\
 		output isn't coloured)\n\
-	-P	Turn off -p\n"
-#ifdef WITH_CURSES
-"	-S	Print streams side-by-side, using curses (bit of a WIP). Note\n\
-		also that -[12ACcPp] are (mostly) silently ignored if this\n\
-		flag is passed\n"
-#endif
-"	-t	Add timestamps\n\
+	-P	Turn off -p\n\
+	-S	Print streams side-by-side, (bit of a WIP). Note also that\n\
+		-[12Pp] are (mostly) silently ignored if this flag is passed.\
+		It may help to export $COLUMNS if you have it\n\
+	-t	Add timestamps\n\
 	-q	Quiet -- don't print anything of our own, just get busy\n\
 		transforming the output of PROG\n\
 	-v	Verbose -- print more\n\
@@ -63,15 +61,7 @@ Options:\n\
 noreturn static void __attribute__((cold))
 version(void)
 {
-	puts("ssss version 0.2, built " __DATE__
-#ifdef WITH_CURSES
-		", with the -S extension with"
-# ifndef WITH_CURSES_WIDE
-		"out"
-# endif
-		" UTF-8 support"
-#endif
-		"\n\
+	puts("ssss version " SSSS_VERSION "\n\
 ssss -- split standard streams: highlight the stdout and stderr of a process\n\
 Copyright 2023-2024 the Remph\n\n\
 This is free software; permission is given to copy and/or distribute it,\n\
@@ -129,15 +119,9 @@ do_colour(const unsigned char flags)
 extern unsigned char
 process_cmdline(const int argc, char *const *const argv)
 {
-	static const char optstr[] = "+12A:CPVchpqtv"
+	static const char optstr[] = "+12A:CPSVchpqtv";
 	/* The + at the beginning is  ^ for GNU getopt(3), to let us pass
-	 * options to PROG (else it permutes them away to us)
-	 *
-	 * Note also lack of semicolon, that's to faciliate this: */
-#ifdef WITH_CURSES
-		"S"
-#endif
-	; /* And *now*, the semicolon */
+	 * options to PROG (else it permutes them away to us) */
 
 	unsigned char flags = 0;
 	enum { ON, OFF, AUTO } colour = AUTO, prefix = AUTO;
@@ -164,9 +148,7 @@ process_cmdline(const int argc, char *const *const argv)
 			break;
 		case 'C':	colour = OFF; break;
 		case 'P':	prefix = OFF; break;
-#ifdef WITH_CURSES
-		case 'S':	flags |= FLAG_CURSES; break;
-#endif
+		case 'S':	flags |= FLAG_COLUMNS; break;
 		case 'V':	version();
 		case 'c':	colour = ON;  break;
 		case 'h':	usage(argv[0]);
@@ -198,32 +180,6 @@ process_cmdline(const int argc, char *const *const argv)
 		exit(-1);
 	}
 
-#ifdef WITH_CURSES
-	if (flags & FLAG_CURSES) {
-		/* quarter-arsed attempt to warn the user for options that
-		 * conflict with -S */
-		static const char optwarning[] =
-			"%s: -%c is ignored when -S is specified\n";
-
-		if (flags & FLAG_ALLINONE)
-			fprintf(stderr, optwarning, *argv, '1');
-
-		switch (prefix) {
-		case AUTO:	break; /* no worries */
-		case OFF:	fprintf(stderr, optwarning, *argv, 'P'); break;
-		case ON:	fprintf(stderr, optwarning, *argv, 'p'); break;
-		}
-
-		switch (colour) {
-		case AUTO:	break; /* no worries */
-		case OFF:	fprintf(stderr, optwarning, *argv, 'C'); break;
-		case ON:	fprintf(stderr, optwarning, *argv, 'c'); break;
-		}
-
-		return flags; /* No need to work on -p or -c */
-	}
-#endif /* with curses */
-
 	/* Hey man, come take a look at this. You here about the compiler
 	 * warnings? Yeah, don't bother yourself with them, buncha squares. I
 	 * just tune em out. Anyway, come get a load of this shit, it'll
@@ -240,6 +196,24 @@ process_cmdline(const int argc, char *const *const argv)
 	case ON:	flags |= FLAG_COLOUR;
 		else
 	case OFF:	flags &= ~FLAG_COLOUR;
+	}
+
+	if (flags & FLAG_COLUMNS) {
+		/* quarter-arsed attempt to warn the user for options that
+		 * conflict with -S */
+		static const char optwarning[] =
+			"%s: -%c is ignored when -S is specified\n";
+
+		if (flags & FLAG_ALLINONE)
+			fprintf(stderr, optwarning, *argv, '1');
+
+		switch (prefix) {
+		case AUTO:	break; /* no worries */
+		case OFF:	fprintf(stderr, optwarning, *argv, 'P'); break;
+		case ON:	fprintf(stderr, optwarning, *argv, 'p'); break;
+		}
+
+		return flags; /* No need to work on -p */
 	}
 
 	switch (prefix) {

@@ -29,8 +29,6 @@ described in the source) and could hypothetically probably maybe compile on
 4.3BSD, although I haven't tested that and wouldn't want to. It should
 almost certainly compile and run fine on any Unix-like system (except maybe
 some pure SysV derivatives like HP-UX or IBM AIX, if that's still around).
-The build `WITH_CURSES` is tested on GNU ncurses and netbsd-curses, although
-it's pretty sketchy on the latter
 
 
 Building
@@ -39,14 +37,12 @@ Building
 To build, run `make`. If applicable, this will automatically run
 configure.sh to generate config.h (don't worry, it's not an autoconf
 script). `ssss` depends only on ANSI C and a POSIX-conformant standard C
-library; it should build straight away on any modern unix-like system
+library; it should build straight away on any modern unix-like system.
 
-There is an extra, WIP feature, printing stdout and stderr side-by-side,
-which requires curses, and can be enabled with `make WITH_CURSES=1`. This
-also requires libcursesw (or just libcurses if you're using netbsd-curses)
-and C95 for Unicode support; in the unlikely event that you are missing
-either of those, Unicode support can be disabled with
-`make WITH_CURSES=1 WITHOUT_UNICODE=1`.
+The `-S` switch requires wide-character support from C95. There is currently
+no way to disable this, as I've personally never even seen a pre-C95
+toolchain, but it should be fairly trivial to implement if for some reason
+it becomes necessary (famous last words)
 
 For usage, run it with `-h`. For more information about system
 compatibility and dependencies, see comments in the source (near the top)
@@ -86,21 +82,9 @@ BUGS
 		&1 yeedleyeedleyee
 
 	As of commit `f33db16e` this behaviour is fairly sporadic.
-
--	The curses thing is a WIP:
-	-	doesn't use scrollback buffer, so if output goes off screen
-		it's gone
-	-	on netbsd-curses it still murderises output when the program
-		ends
-	-	The non-Unicode version can't handle input with embedded NUL
-		chars. This is a pretty minor issue
+-	The `-S` switch is still a little rough around the edges
 
 TODO
 ----
 
-Give up the ghost on curses scrollback (intractable) and make it print in
-simple columns instead, with gaps in each column where only the other has
-output. This could quite possibly be implemented without curses, using
-COLUMNS and LINES in the input where available, though this would be unable
-to handle SIGWINCH -- maybe we could make the column-printing thing
-configurable at compile-time whether or not it would use curses
+Can `-S` follow window size? Maybe with terminfo?
