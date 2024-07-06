@@ -122,7 +122,6 @@ ugly_column_hack(const int ofd, const int efd, const unsigned char flags)
 		const char *__restrict__ const env_ncols = getenv("COLUMNS");
 		if (!(env_ncols && (ncolumns = atoi(env_ncols)) > 0))
 			ncolumns = 80;
-		fprintf(stderr, "columns: %i\n", ncolumns);
 	}
 
 	return print_columns(o, e, ncolumns, flags);
