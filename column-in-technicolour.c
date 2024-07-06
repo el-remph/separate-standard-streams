@@ -58,6 +58,7 @@ get_wline_or_eof(
 		if (len && outbuf[len - 1] == L'\n')
 			outbuf[len - 1] = '\0';
 	} else {
+		*outbuf = L'\0';
 		if (!watch_file(stream))
 			*watch &= ~fd;
 	}
