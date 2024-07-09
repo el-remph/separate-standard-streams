@@ -328,9 +328,14 @@ parent_listen(const int child_out, const int child_err,
 		}
 		if (fdsn == 1) break;
 		switch (select(fdsn, &fds, NULL, NULL, NULL)) {
-			case -1: err(-1, "select(2)");
-			case  0: return;
-			default:
+		case -1:
+			if (errno == EINTR)
+				break;
+			err(-1, "select(2)");
+
+		case 0:	return;
+
+		default:
 			if (flags & FLAG_COLUMNS) {
 				watch = ugly_column_hack(child_out, child_err, flags);
 				break;

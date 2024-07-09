@@ -8,6 +8,11 @@
 
 #include <err.h>
 
+#ifdef HAVE_SYS_IOCTL_H
+#include <signal.h>
+#include <sys/ioctl.h>
+#endif
+
 #include "column-in-technicolour.h"
 #include "process_cmdline.h"
 #include "timestamp.h"
@@ -66,6 +71,49 @@ get_wline_or_eof(
 	return ret;
 }
 
+static volatile int ncolumns = -1;
+
+#ifdef TIOCGWINSZ
+static void
+handler_set_ncolumns(int sigwinch __attribute__((unused)))
+{
+	struct winsize ws;
+	if (ioctl(fileno(stdout), TIOCGWINSZ, &ws) == 0)
+		ncolumns = ws.ws_col;
+	else
+		warn("ioctl(2)");
+}
+#endif
+
+static int /* unsigned short, mayhaps? */
+ncolumns_init(void)
+{
+#ifdef TIOCGWINSZ
+	{
+		struct winsize ws;
+		if (ioctl(fileno(stdout), TIOCGWINSZ, &ws) == 0) {
+			struct sigaction sa = { 0 };
+			sa.sa_handler = handler_set_ncolumns;
+			if (sigaction(SIGWINCH, &sa, NULL) != 0)
+				warn("sigaction(2)");
+			return ws.ws_col;
+		}
+	}
+	if (errno != ENOTTY)
+		warn("ioctl(2)");
+#endif
+
+	{
+		const char *__restrict__ const env_ncols = getenv("COLUMNS");
+		const int res = env_ncols ? atoi(env_ncols) : 0;
+		if (res > 0)
+			return res;
+	}
+
+	/* if all else fails, default to the good old */
+	return 80;
+}
+
 /* TODO: respect values of watch in the parent loop so we don't repeatedly
  * make system calls to read(2) just to get EAGAIN every time. Or should we?
  * Is it worth checking every time? */
@@ -73,7 +121,6 @@ static int
 print_columns (
 	FILE *__restrict__ const o,
 	FILE *__restrict__ const e,
-	const int ncolumns,
 	const unsigned char flags
 ) {
 	const char
@@ -86,7 +133,12 @@ print_columns (
 
 	int watch = STDOUT_FILENO | STDERR_FILENO;
 
-	int cols = (ncolumns - (TIMESTAMP_SIZE * !!(flags & FLAG_TIMESTAMPS))) / 2;
+	/* this is the only time that ncolumns is referenced at all (a
+	 * read), so this is hopefully async-signal-safe (assuming ofc that
+	 * the read itself cannot be interrupted, which it surely can't
+	 * be..?) */
+	const int cols = (ncolumns - (TIMESTAMP_SIZE * !!(flags & FLAG_TIMESTAMPS))) / 2;
+
 	wchar_t	*__restrict__ const obuf = xcalloc(cols, sizeof *obuf),
 		*__restrict__ const ebuf = xcalloc(cols, sizeof *ebuf);
 
@@ -113,17 +165,12 @@ ugly_column_hack(const int ofd, const int efd, const unsigned char flags)
 {
 	static const char mode[] = "r";
 	static FILE *__restrict__ o = NULL, *__restrict__ e = NULL;
-	static int ncolumns = -1; /* `int' for potential terminfo/curses compatibility */
 
 	if (!((o || (o = fdopen(ofd, mode))) && (e || (e = fdopen(efd, mode))))) /* woowee */
 		err(-1, NULL);
 
-	if (ncolumns == -1) {
-		/* TODO: detect number of columns properly */
-		const char *__restrict__ const env_ncols = getenv("COLUMNS");
-		if (!(env_ncols && (ncolumns = atoi(env_ncols)) > 0))
-			ncolumns = 80;
-	}
+	if (ncolumns == -1)
+		ncolumns = ncolumns_init();
 
-	return print_columns(o, e, ncolumns, flags);
+	return print_columns(o, e, flags);
 }

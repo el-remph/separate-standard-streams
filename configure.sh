@@ -94,16 +94,18 @@ strsignal(3)/sys_siglist[] not found; signal descriptions will be unavailable'
 	   ;;
 esac
 
-# sys_select.h(0p)
-if $CC -E -<<EOF>/dev/null
-#include <sys/select.h>
-EOF
-then
-	echo '#define HAVE_SYS_SELECT_H'
-	chat '<sys/select.h> found'
-else
-	chat '<sys/select.h> not found; probably nbd'
-fi
+# TODO: check also for ioctl.h, stropts.h ?
+for header in 'sys/select.h' 'sys/ioctl.h'; do
+	if echo "#include <$header>" | $CC -E ->/dev/null; then
+		echo "$header" | sed	\
+			-e y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/	\
+			-e 's/[^[:alnum:]_]/_/g'	\
+			-e 's/^/#define HAVE_/'
+		chat "<$header> found"
+	else
+		chat "<$header> not found; probably nbd"
+	fi
+done
 
 # feature_test_macros(7)
 [ -n $define_BSD ] && echo '#define _BSD_SOURCE

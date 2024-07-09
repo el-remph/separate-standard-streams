@@ -46,7 +46,8 @@ Options:\n\
 	-P	Turn off -p\n\
 	-S	Print streams side-by-side, (bit of a WIP). Note also that\n\
 		-[12Pp] are (mostly) silently ignored if this flag is passed.\n\
-		It may help to export $COLUMNS if you have it\n\
+		Note that $COLUMNS is respected if ssss can't get window size\n\
+		from the terminal\n\
 	-t	Add timestamps\n\
 	-q	Quiet -- don't print anything of our own, just get busy\n\
 		transforming the output of PROG\n\
