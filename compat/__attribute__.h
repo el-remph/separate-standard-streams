@@ -26,6 +26,8 @@
  ** Intel(R) compilers that support GNU syntax such as __attribute__
  *  typically #define __GNUC__, so checking __INTEL_COMPILER is redundant
  *  at best and possibly harmful, not dissimilar to Intel(R) compilers
+ ** No need to test for __neatcc__, since neatcc just defines a noop like
+ *  we do after `#else'
  *
  * TODO:
  ** Anyone else?
@@ -33,8 +35,9 @@
  *  cproc's __atribute__(())s, but break on many old-time compilers. The
  *  blacklist would basically be #ifndef MSVC lol
  ** Check versions */
-#if (defined(__GNUC__) || defined(__PCC__) || defined(__TINYC__) || \
-     defined(__IBMC__) || defined(__has_attribute) || defined(__attribute__))
+#if (defined __GNUC__ || defined __PCC__ || defined __TINYC__ ||	\
+     defined __IBMC__ || defined __NWCC__ ||	\
+     defined __has_attribute || defined __attribute__)
 /* do nothing (__attribute__(()) is supported) */
 
 #elif __STDC_VERSION__ >= 202000L || __cplusplus >= 201100L
