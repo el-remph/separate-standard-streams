@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <stdlib.h> /* calloc(3), free(3) */
+#include <stdlib.h> /* realloc(3), free(3) */
 #include <wchar.h>
 
 #include <err.h>
@@ -18,6 +18,7 @@
 #include "timestamp.h"
 
 #include "compat/bool.h"
+#include "compat/ckdint.h"
 #include "compat/inline-restrict.h"
 #include "compat/__attribute__.h"
 
@@ -28,14 +29,27 @@
 #define STDERR_FILENO 2
 #endif
 
-static void * __attribute__((__malloc__, returns_nonnull))
-xcalloc(const size_t nmemb, const size_t size)
+static void * __attribute__((returns_nonnull))
+xreallocbuf(void * ptr, const size_t nmemb, const size_t size)
+/* like glibc reallocarray(3), but sets errno to EOVERFLOW */
 {
-	void *const ptr = calloc(nmemb, size);
+	size_t actualsize;
+#ifdef ckd_mul
+	if (ckd_mul(&actualsize, nmemb, size)) {
+		errno = EOVERFLOW;
+		goto fail;
+	}
+#else
+	actualsize = nmemb * size; /* eh w/e */
+#endif
+
+	ptr = realloc(ptr, actualsize);
 	if (!ptr)
-		err(-1, NULL);
+fail:		err(-1, NULL);
 	return ptr;
 }
+
+#define XREALLOCBUF(ptr, size) (ptr = xreallocbuf(ptr, size, sizeof *ptr))
 
 static bool
 watch_file(FILE *const file)
@@ -71,6 +85,9 @@ get_wline_or_eof(
 	return ret;
 }
 
+/* this is set from TIOCGWINSZ(2const), from a struct winsize .ws_col, an
+ * unsigned short, so it is initialised to a value which it cannot have
+ * been set to */
 static volatile int ncolumns = -1;
 
 #ifdef TIOCGWINSZ
@@ -106,7 +123,7 @@ ncolumns_init(void)
 	{
 		const char *__restrict__ const env_ncols = getenv("COLUMNS");
 		const int res = env_ncols ? atoi(env_ncols) : 0;
-		if (res > 0)
+		if (res > 0) /* && res < USHRT_MAX ? */
 			return res;
 	}
 
@@ -123,6 +140,9 @@ print_columns (
 	FILE *__restrict__ const e,
 	const unsigned char flags
 ) {
+	static wchar_t *__restrict__ obuf = NULL, *__restrict__ ebuf = NULL;
+	static int prev_cols = -1; /* see comment on initialisation of ncolumns */
+	char timestamp[TIMESTAMP_SIZE] = "";
 	const char
 		*const red	= (flags & FLAG_COLOUR) ? "\033[31m" : "",
 		*const green	= (flags & FLAG_COLOUR) ? "\033[32m" : "",
@@ -130,7 +150,6 @@ print_columns (
 			((flags & (FLAG_COLOUR | FLAG_TIMESTAMPS)) == (FLAG_COLOUR | FLAG_TIMESTAMPS))
 			? "\033[m"
 			: "";
-
 	int watch = STDOUT_FILENO | STDERR_FILENO;
 
 	/* this is the only time that ncolumns is referenced at all (a
@@ -139,10 +158,9 @@ print_columns (
 	 * be..?) */
 	const int cols = (ncolumns - (TIMESTAMP_SIZE * !!(flags & FLAG_TIMESTAMPS))) / 2;
 
-	wchar_t	*__restrict__ const obuf = xcalloc(cols, sizeof *obuf),
-		*__restrict__ const ebuf = xcalloc(cols, sizeof *ebuf);
-
-	char timestamp[TIMESTAMP_SIZE] = "";
+	if (cols != prev_cols)
+		XREALLOCBUF(obuf, cols), XREALLOCBUF(ebuf, cols),
+		prev_cols = cols;
 
 	/* should this be repeated on each loop? */
 	if (flags & FLAG_TIMESTAMPS)
@@ -151,10 +169,11 @@ print_columns (
 	/* TODO: reset cols every loop if SIGWINCH has been (terminfo?) */
 	while (get_wline_or_eof(obuf, cols, o, STDOUT_FILENO, &watch)
 	    || get_wline_or_eof(ebuf, cols, e, STDERR_FILENO, &watch))
-		wprintf(L"%s%s%s%-*ls%s%-*ls\n", nocolour, timestamp, green, cols, obuf, red, cols, ebuf);
+		wprintf(L"%s%s" L"%s%-*ls" L"%s%-*ls" L"\n",
+			nocolour, timestamp,
+			green, cols, obuf,
+			red, cols, ebuf);
 
-	free(obuf);
-	free(ebuf);
 	return watch;
 }
 

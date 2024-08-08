@@ -69,6 +69,7 @@ column-in-technicolour.o process_cmdline.o timestamp.o: %.o: %.h
 
 ssss.o process_cmdline.o: compat/bool.h
 ssss.o column-in-technicolour.o process_cmdline.o: compat/inline-restrict.h
+column-in-technicolour.o: compat/ckdint.h
 
 config.h: configure.sh
 	./$<>$@ || { ret=$$?; rm -f $@; exit $$ret; }
