@@ -17,6 +17,7 @@
 #include "process_cmdline.h"
 #include "timestamp.h"
 
+#include "compat/unlocked-stdio.h"
 #include "compat/bool.h"
 #include "compat/ckdint.h"
 #include "compat/inline-restrict.h"

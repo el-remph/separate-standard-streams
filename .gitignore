@@ -1,4 +1,4 @@
 ssss
-ssss.s
 config.h
+compat/unlocked-stdio.h
 *.o

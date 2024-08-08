@@ -8,6 +8,7 @@
 #include <unistd.h> /* isatty(3), getopt(3) */
 
 #include "process_cmdline.h"
+#include "compat/unlocked-stdio.h"
 #include "compat/bool.h"
 #include "compat/inline-restrict.h"
 #include "compat/__attribute__.h"
@@ -44,9 +45,9 @@ Options:\n\
 	-p	Prefix lines with the fd whence they came (default: if\n\
 		output isn't coloured)\n\
 	-P	Turn off -p\n\
-	-S	Print streams side-by-side, (bit of a WIP). Note also that\n\
-		-[12Pp] are (mostly) silently ignored if this flag is passed.\n\
-		Note that $COLUMNS is respected if ssss can't get window size\n\
+	-S	Print streams side-by-side, (bit of a WIP). Note that -[12Pp]\n\
+		are (mostly) silently ignored if this flag is passed. Note\n\
+		also that $COLUMNS is respected if ssss can't get window size\n\
 		from the terminal\n\
 	-t	Add timestamps\n\
 	-q	Quiet -- don't print anything of our own, just get busy\n\

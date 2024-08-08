@@ -68,14 +68,11 @@ $(OBJS): config.h compat/__attribute__.h
 column-in-technicolour.o process_cmdline.o timestamp.o: %.o: %.h
 
 ssss.o process_cmdline.o: compat/bool.h
-ssss.o column-in-technicolour.o process_cmdline.o: compat/inline-restrict.h
+ssss.o column-in-technicolour.o process_cmdline.o: compat/inline-restrict.h compat/unlocked-stdio.h
 column-in-technicolour.o: compat/ckdint.h
 
-config.h: configure.sh
-	./$<>$@ || { ret=$$?; rm -f $@; exit $$ret; }
-# ^ This removes config.h if configuration fails, to avoid a false positive
-# with a subsequent invocation of make, which could continue with a malformed
-# config.h
+config.h compat/unlocked-stdio.h &: configure.sh
+	./$<
 
 clean:
-	@rm -fv ssss $(OBJS) config.h
+	@rm -fv ssss $(OBJS) config.h compat/unlocked-stdio.h ssss.1

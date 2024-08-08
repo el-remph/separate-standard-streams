@@ -78,7 +78,8 @@ foo(const size_t n,
 #include "process_cmdline.h"
 #include "timestamp.h"
 
-/* These must always be the last <#include>s */
+/* These must always be the last <#include>s, preferably in this order */
+#include "compat/unlocked-stdio.h"
 #include "compat/bool.h"
 #include "compat/inline-restrict.h"
 #include "compat/__attribute__.h"
