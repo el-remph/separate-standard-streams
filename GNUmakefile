@@ -39,14 +39,14 @@ OBJS = ssss.o process_cmdline.o timestamp.o column-in-technicolour.o
 ifdef DEBUG
     # a dev build
     CSTANDARD    ?=-ansi -pedantic
-    OPTIMISATION ?=-Og -ggdb3 -fstrict-aliasing -Wstrict-aliasing=1
-    LDFLAGS      ?= -flto
+    OPTIMISATION ?=-Og -ggdb3 -fstrict-aliasing -Wstrict-aliasing=1 -flto=auto
+    LDFLAGS      ?= -flto=auto
 else
     # Proper build -- don't define CSTANDARD (unless the user does on
     # the command line), let the compiler use everything it's got
-    OPTIMISATION ?=-O2 -march=native -mtune=native
+    OPTIMISATION ?=-O2 -flto=auto
     CPPFLAGS     ?= -DNDEBUG
-    LDFLAGS      ?= -flto -s
+    LDFLAGS      ?= -flto=auto -s
 endif
 
 CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
@@ -67,9 +67,10 @@ $(OBJS): config.h compat/__attribute__.h
 # Basically every object except ssss.o
 column-in-technicolour.o process_cmdline.o timestamp.o: %.o: %.h
 
+ssss.o process_cmdline.o column-in-technicolour.o: compat/inline-restrict.h compat/unlocked-stdio.h
 ssss.o process_cmdline.o: compat/bool.h
-ssss.o column-in-technicolour.o process_cmdline.o: compat/inline-restrict.h compat/unlocked-stdio.h
 column-in-technicolour.o: compat/ckdint.h
+ssss.o: column-in-technicolour.h process_cmdline.h timestamp.h
 
 config.h compat/unlocked-stdio.h &: configure.sh
 	./$<

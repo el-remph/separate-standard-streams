@@ -48,13 +48,15 @@ For usage, run it with `-h`. For more information about system
 compatibility and dependencies, see comments in the source (near the top)
 and `configure.sh`, and if you really need that then godspeed to you.
 
+
 Copyright
 ---------
 
-Copyright &copy; 2023-2024 The Remph. This is free software: file-specific
-licence information is contained in SPDX headers at the top of each file,
-and the full GPL text is in the file [GPL](./GPL), or at
-<https://gnu.org/licenses/gpl.txt>.
+Copyright &copy; 2023-2024 The Remph <lhr@disroot.org>. This is free
+software: file-specific licence information is contained in SPDX headers
+at the top of each file, and the full GPL text is in the file [GPL](GPL),
+or at <https://gnu.org/licenses/gpl.txt>.
+
 
 BUGS
 ----
@@ -64,6 +66,7 @@ BUGS
 	compiler (509 bytes), but if you're using a very strictly ANSI
 	C-compliant compiler with a hard 509-byte string cutoff, you probably
 	have bigger problems
+
 -	If the child process (PROG in -h output) exits quickly, its output
 	may be flushed to us all at once, which means the output of each
 	stream at the time of flushing will be printed each in one block
@@ -82,9 +85,3 @@ BUGS
 		&1 yeedleyeedleyee
 
 	As of commit `f33db16e` this behaviour is fairly sporadic.
--	The `-S` switch is still a little rough around the edges
-
-TODO
-----
-
-Can `-S` follow window size? Maybe with terminfo?

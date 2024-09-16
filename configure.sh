@@ -6,7 +6,7 @@
 # Supported in this script:
 # - strsignal(3) or sys_siglist[]
 # - unlocked_stdio(3)
-# - headers: <sys/select.h>, <sys/ioctl.h>
+# - headers: <sys/select.h>, <sys/ioctl.h> or <ioctl.h> or <stropts.h>
 #
 # Supported in preprocessor chicanery in the source code:
 # - __attribute__
@@ -39,6 +39,14 @@ fi
 
 chat() {
 	echo "$0: $*" >&2
+}
+
+have_header() {
+	echo "#include <$*>" | $CC -E ->/dev/null &&
+		echo "$*" | sed	\
+			-e y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/	\
+			-e 's/[^[:alnum:]_]/_/g'	\
+			-e 's/^/#define HAVE_/'
 }
 
 trap '
@@ -95,17 +103,22 @@ $a\
 ' | tee compat/unlocked-stdio.h | grep -q '^# define'
 then
 	define_BSD=1 define_DARWIN=1
+	chat 'unlocked_stdio(3) found'
+else
+	chat 'unlocked_stdio(3) not found (nw)'
 fi
 
 
 chat 'Generating config.h'
 exec >config.h
 
-echo "$head_comment
+printf '%s
 #ifndef CONFIG_H
 #define CONFIG_H
-"
-printf '#define SSSS_VERSION "%s"\n' "$(git describe --tags --long 2>/dev/null || echo v0.4.1)"
+
+#define SSSS_VERSION "%s"
+
+' "$head_comment" "$(git describe --tags --long 2>/dev/null || echo v0.4.2)"
 
 # strsignal(3)
 case $headers in
@@ -125,16 +138,21 @@ case $headers in
 		;;
 esac
 
-# TODO: check also for ioctl.h, stropts.h ?
-for header in 'sys/select.h' 'sys/ioctl.h'; do
-	if echo "#include <$header>" | $CC -E ->/dev/null; then
-		echo "$header" | sed	\
-			-e y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/	\
-			-e 's/[^[:alnum:]_]/_/g'	\
-			-e 's/^/#define HAVE_/'
-		chat "<$header> found"
+if have_header 'sys/select.h'; then
+	chat "<sys/select.h> found"
+else
+	chat "<sys/select.h> not found; probably nbd"
+fi
+
+ioctl_headers='sys/ioctl.h ioctl.h stropts.h'
+for ioctl in $ioctl_headers ''; do
+	if test -z "$ioctl"; then
+		chat "None found of $ioctl_headers"
+	elif have_header $ioctl; then
+		chat "<$ioctl> found"
+		break
 	else
-		chat "<$header> not found; probably nbd"
+		chat "<$ioctl> not found"
 	fi
 done
 

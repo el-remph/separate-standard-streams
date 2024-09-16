@@ -9,9 +9,17 @@
 #include <err.h>
 
 #ifdef HAVE_SYS_IOCTL_H
-#include <signal.h>
 #include <sys/ioctl.h>
-#endif
+#elif defined HAVE_IOCTL_H
+#include <ioctl.h>
+#elif defined HAVE_STROPTS_H
+#include <stropts.h>
+#else
+#define NO_IOCTL
+#endif /* HAVE_SYS_IOCTL_H */
+#ifndef NO_IOCTL
+#include <signal.h>
+#endif /* NO_IOCTL */
 
 #include "column-in-technicolour.h"
 #include "process_cmdline.h"

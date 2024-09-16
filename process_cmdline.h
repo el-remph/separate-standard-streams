@@ -22,7 +22,7 @@ static const unsigned char
 #if __STDC_VERSION__ >= 202300L
 }
 #endif /* C23 */
-       ;
+	;
 
 extern unsigned char process_cmdline(const int argc, char *const * argv) __attribute__((leaf));
 
