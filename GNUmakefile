@@ -55,7 +55,7 @@ CFLAGS?=-pipe $(OPTIMISATION) $(CSTANDARD) $(CWARNINGS)
 .PHONY = all clean
 
 all: ssss
-ssss: $(OBJS)
+ssss: $(OBJS) dryopt/dryopt.o
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 ifndef DEBUG
 	strip $@
@@ -69,6 +69,9 @@ column-in-technicolour.o process_cmdline.o timestamp.o: %.o: %.h
 
 ssss.o process_cmdline.o column-in-technicolour.o: compat/inline-restrict.h compat/unlocked-stdio.h
 ssss.o process_cmdline.o: compat/bool.h
+process_cmdline.o: dryopt/dryopt.h
+dryopt/dryopt.o: dryopt/dryopt.c dryopt/dryopt.h
+	make -C dryopt
 column-in-technicolour.o: compat/ckdint.h
 ssss.o: column-in-technicolour.h process_cmdline.h timestamp.h
 

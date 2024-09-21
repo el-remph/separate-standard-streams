@@ -2,68 +2,31 @@
    SPDX-License-Identifier: GPL-3.0-or-later */
 #include "config.h" /* Must be before any other includes or test macros */
 
+#include <assert.h>
 #include  <stdio.h> /* puts(3), printf(3), fprintf(3) */
 #include <stdlib.h> /* exit(3) */
 #include <string.h> /* strcmp(3) */
-#include <unistd.h> /* isatty(3), getopt(3) */
+#include <unistd.h> /* isatty(3), optind */
+
+#include "compat/bool.h"
+#include "compat/inline-restrict.h"
+
+/* horrible horrible hackery */
+#define restrict __restrict__ /* __restrict__ already defined (maybe) by compat/inline-restrict.h */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#pragma GCC diagnostic ignored "-Wlong-long"
+#include "dryopt/dryopt.h"
+#pragma GCC diagnostic pop
 
 #include "process_cmdline.h"
 #include "compat/unlocked-stdio.h"
-#include "compat/bool.h"
-#include "compat/inline-restrict.h"
 #include "compat/__attribute__.h"
 
-#if __STDC_VERSION__ >= 202000L
-/* C23 deprecates stdnoreturn.h and _Noreturn after just two revisions in
- * favour of newly introduced [[attributes]]. Also introduces the deprecated
- * [[_Noreturn]] -- yes, introduced deprecated: born dead */
-# define noreturn [[__noreturn__]]
-#elif __STDC_VERSION__ >= 201100L
-# define noreturn _Noreturn
-#elif defined(__DMC__) || defined(__WATCOMC__) || defined(__MSC_VER__)
-# define noreturn __declspec(noreturn) /* My condolences */
-#else
-# define noreturn __attribute__((__noreturn__))	/* compat/__attribute__.h
-						   already included */
-#endif
-
-noreturn static void __attribute__((cold))
-usage(const char *__restrict__ const progname)
+static size_t __attribute__((cold))
+version(struct dryopt const * opt __attribute__((unused)), char const * arg __attribute__((unused)))
 {
-	static const char help[] = "\
-Usage: %s [OPT(s)] PROG [PROGARG(s)]\n\
-Runs PROG with PROGARG(s) if any, and marks which of the output is stdout\n\
-and which is stderr. Returns PROG's exit status\n\
-Options:\n\
-	-1	Output everything to one stream, stdout. Equivalent of piping\n\
-		through |& in bash\n\
-	-2	Output PROG's stdout->stdout and stderr->stderr (default)\n\
-	-A OPTS	Set any applicable option characters in OPTS (/(?i)[cp]/) to\n\
-		auto-detect their values (ie. default settings)\n\
-	-c	Colour output (default: if output isatty(3))\n\
-	-C	Turn off -c\n\
-	-p	Prefix lines with the fd whence they came (default: if\n\
-		output isn't coloured)\n\
-	-P	Turn off -p\n\
-	-S	Print streams side-by-side, (bit of a WIP). Note that -[12Pp]\n\
-		are (mostly) silently ignored if this flag is passed. Note\n\
-		also that $COLUMNS is respected if ssss can't get window size\n\
-		from the terminal\n\
-	-t	Add timestamps\n\
-	-q	Quiet -- don't print anything of our own, just get busy\n\
-		transforming the output of PROG\n\
-	-v	Verbose -- print more\n\
-	--help, -h	Print this help\n\
-	--version, -V	Print version information\n";
-
-	printf(help, progname);
-	exit(EXIT_SUCCESS);
-}
-
-noreturn static void __attribute__((cold))
-version(void)
-{
-	puts("ssss version " SSSS_VERSION "\n\
+	puts("ssss version " SSSS_VERSION ", DRYopt branch\n\
 ssss -- split standard streams: highlight the stdout and stderr of a process\n\
 Copyright 2023-2024 the Remph\n\n\
 This is free software; permission is given to copy and/or distribute it,\n\
@@ -72,16 +35,6 @@ Licence, version 3 or later. For more information, see the GNU GPL, found\n\
 distributed with this in the file `GPL', and at https://gnu.org/licenses/gpl");
 
 	exit(EXIT_SUCCESS);
-}
-
-static void __attribute__((cold))
-longopt_help_version(char *const *const argv)
-{
-	const char *const longname = argv[1] + 1 + !!(argv[1][1] == '-');
-	if (strcmp(longname, "help") == 0)
-		usage(argv[0]);
-	if (strcmp(longname, "version") == 0)
-		version();
 }
 
 extern char ** environ;
@@ -118,65 +71,77 @@ do_colour(const unsigned char flags)
 		: false;
 }
 
+enum threeway_switch { OFF = 0, ON = 1, AUTO };
+
+struct optA_callback_data {
+	char const *__restrict__ progname;
+	enum threeway_switch *__restrict__ colour, *__restrict__ prefix;
+};
+
+static size_t
+optA_callback(struct dryopt const *__restrict__ const opt, char const *__restrict__ const arg)
+{
+	struct optA_callback_data const *const dat = opt->assign_val.p;
+	size_t i;
+	for (i = 0; arg[i]; i++)
+		switch (arg[i]) {
+		case 'C': case 'c': *dat->colour = AUTO; break;
+		case 'P': case 'p': *dat->prefix = AUTO; break;
+		default: return i;
+		}
+	return i;
+}
+
+#define ARGPTR(x) sizeof(x), &(x)
+
 extern unsigned char
 process_cmdline(const int argc, char *const *const argv)
 {
-	static const char optstr[] = "+12A:CPSVchpqtv";
-	/* The + at the beginning is  ^ for GNU getopt(3), to let us pass
-	 * options to PROG (else it permutes them away to us) */
-
 	unsigned char flags = 0;
-	enum { ON, OFF, AUTO } colour = AUTO, prefix = AUTO;
 
-	/* hacky support for --help and --version */
-	if (argv[1] && argv[1][0] == '-')
-		longopt_help_version(argv);
+	/* All the static memory here is really just to facilitate
+	   initialising opt[], since these variables' addresses will now be
+	   known ahead of time */
+	static bool	allinone = false, columns = false, quiet = false,
+			timestamps = false, verbose = false;
+	static enum threeway_switch colour = AUTO, prefix = AUTO;
 
-	for (;;) {
-		const int o = getopt(argc, argv, optstr);
-		if (o == -1) break;
-		switch (o) {
-		case '1':	flags |=  FLAG_ALLINONE; break;
-		case '2':	flags &= ~FLAG_ALLINONE; break;
-		case 'A':
-			for (; *optarg; optarg++)
-				switch (*optarg) {
-				case 'C': case 'c': colour = AUTO; break;
-				case 'P': case 'p': prefix = AUTO; break;
-				default:
-					fprintf(stderr, "%s: invalid: -A %c", *argv, *optarg);
-					exit(-1);
-				}
-			break;
-		case 'C':	colour = OFF; break;
-		case 'P':	prefix = OFF; break;
-		case 'S':	flags |= FLAG_COLUMNS; break;
-		case 'V':	version();
-		case 'c':	colour = ON;  break;
-		case 'h':	usage(argv[0]);
-		case 'p':	prefix = ON;  break;
-		case 'q':	flags |= FLAG_QUIET; break;
-		case 't': 	flags |= FLAG_TIMESTAMPS; break;
-		case 'v':	flags |= FLAG_VERBOSE; break;
+	struct dryopt opt[] = {
+		{ L'1', "allinone", "Output everything to one stream, stdout. Equivalent of piping through |& in bash",
+			UNSIGNED, NO_ARG, ARGPTR(allinone), {{true}} },
+		{ L'2', NULL, "Output PROG's stdout->stdout and stderr->stderr (default; aka --no-allinone)",
+			UNSIGNED, NO_ARG, ARGPTR(allinone), {{false}} },
+		{ L'A', "auto", "Set any applicable option characters in ARG (/(?i)[cp]/) to auto-detect their values (ie. default settings)",
+			CALLBACK, REQ_ARG, 0, optA_callback, {{0}} /*init below*/ },
+		{ L'c', "colour", "Colour output (default: if output isatty(3))",
+			UNSIGNED, NO_ARG, ARGPTR(colour), {{ON}} },
+		{ L'C', NULL, "Turn off -c (aka --no-colour)",
+			UNSIGNED, NO_ARG, ARGPTR(colour), {{OFF}} },
+		{ L'p', "prefix", "Prefix lines with the fd whence they came (default: if output isn't coloured)",
+			UNSIGNED, NO_ARG, ARGPTR(prefix), {{ON}} },
+		{ L'P', NULL, "Turn off -p (aka --no-prefix)",
+			UNSIGNED, NO_ARG, ARGPTR(prefix), {{OFF}} },
+		{ L'S', "columns", "Print streams side-by-side, (bit of a WIP). Note that -[12Pp] are (mostly) silently ignored if this flag is passed. Note also that $COLUMNS is respected if ssss can't get window size from the terminal",
+			UNSIGNED, NO_ARG, ARGPTR(columns), {{true}} },
+		{ L't', "timestamp",	NULL, UNSIGNED, NO_ARG, ARGPTR(timestamps), {{true}} },
+		{ L'q', "quiet",	NULL, UNSIGNED, NO_ARG, ARGPTR(quiet), {{true}} },
+		{ L'v', "verbose",	NULL, UNSIGNED, NO_ARG, ARGPTR(verbose), {{true}} },
+		{ L'V', "version",	NULL, CALLBACK, NO_ARG, 0, version, {{0}} }
+	};
 
-#ifndef __GLIBC__
-		case '+':
-			/* Provide an error message for -+ on non-GNU
-			 * systems. It'll fail notwithstanding, just
-			 * don't want it to fail silently */
-			fprintf(stderr, "%s: invalid option -- +\n", argv[0]);
-			/*@fallthrough@*/
-#endif
-		default:	exit(-1);
-		}
-	}
+	/* No question of static memory here though :( */
+	struct optA_callback_data datA = { NULL, &colour, &prefix };
+	datA.progname = *argv;
+	opt[2].assign_val.p = &datA;
+	assert(opt[2].shortopt == L'A');
 
+	optind = DRYOPT_PARSE(argv, opt);
 	if (argc - optind == 0) {
 		fprintf(stderr, "%s: not enough arguments\n", argv[0]);
 		exit(-1);
 	}
 
-	if ((flags & FLAG_QUIET) && (flags & FLAG_VERBOSE)) {
+	if (quiet && verbose) {
 		fprintf(stderr, "%s: Can't specify both -q and -v\n",
 			argv[0]); /* ^ Because I say so */
 		exit(-1);
@@ -200,13 +165,13 @@ process_cmdline(const int argc, char *const *const argv)
 	case OFF:	flags &= ~FLAG_COLOUR;
 	}
 
-	if (flags & FLAG_COLUMNS) {
+	if (columns) {
 		/* quarter-arsed attempt to warn the user for options that
 		 * conflict with -S */
 		static const char optwarning[] =
 			"%s: -%c is ignored when -S is specified\n";
 
-		if (flags & FLAG_ALLINONE)
+		if (allinone)
 			fprintf(stderr, optwarning, *argv, '1');
 
 		switch (prefix) {
@@ -214,18 +179,19 @@ process_cmdline(const int argc, char *const *const argv)
 		case OFF:	fprintf(stderr, optwarning, *argv, 'P'); break;
 		case ON:	fprintf(stderr, optwarning, *argv, 'p'); break;
 		}
-
-		return flags; /* No need to work on -p */
+	} else {
+		switch (prefix) {
+		case AUTO:
+			if (flags & FLAG_COLOUR)
+		case OFF:	flags &= ~FLAG_PREFIX;
+			else
+		case ON:	flags |= FLAG_PREFIX;
+		}
 	}
 
-	switch (prefix) {
-	case AUTO:
-		if (flags & FLAG_COLOUR)
-	case OFF:	flags &= ~FLAG_PREFIX;
-		else
-	case ON:	flags |= FLAG_PREFIX;
-	}
-
-	return flags;
+	return flags	| FLAG_ALLINONE * allinone
+			| FLAG_TIMESTAMPS * timestamps
+			| FLAG_VERBOSE * verbose
+			| FLAG_QUIET * quiet
+			| FLAG_COLUMNS * columns;
 }
-
