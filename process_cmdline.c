@@ -97,36 +97,33 @@ optA_callback(struct dryopt const *__restrict__ const opt, char const *__restric
 extern unsigned char
 process_cmdline(const int argc, char *const *const argv)
 {
-	unsigned char flags = 0;
-
-	/* All the static memory here is really just to facilitate
-	   initialising opt[], since these variables' addresses will now be
-	   known ahead of time */
-	static bool	allinone = false, columns = false, quiet = false,
-			timestamps = false, verbose = false;
+	/* Static memory here is really just to facilitate initialising opt[],
+	   since these variables' addresses will now be known ahead of time */
+	static unsigned char flags = 0;
 	static enum threeway_switch colour = AUTO, prefix = AUTO;
 
 	struct dryopt opt[] = {
 		{ L'1', "allinone", "Output everything to one stream, stdout. Equivalent of piping through |& in bash",
-			UNSIGNED, NO_ARG, ARGPTR(allinone), {{true}} },
+			UNSIGNED, NO_ARG, DRYARG_OR, ARGPTR(flags), {{FLAG_ALLINONE}} },
 		{ L'2', NULL, "Output PROG's stdout->stdout and stderr->stderr (default; aka --no-allinone)",
-			UNSIGNED, NO_ARG, ARGPTR(allinone), {{false}} },
+			UNSIGNED, NO_ARG, DRYARG_AND, ARGPTR(flags), {{(unsigned char)~FLAG_ALLINONE}} },
+			/* {{FLAG_ALLINONE ^ UCHAR_MAX}} would also work */
 		{ L'A', "auto", "Set any applicable option characters in ARG (/(?i)[cp]/) to auto-detect their values (ie. default settings)",
-			CALLBACK, REQ_ARG, 0, optA_callback, {{0}} /*init below*/ },
+			CALLBACK, REQ_ARG, 0, 0, optA_callback, {{0}} /*init below*/ },
 		{ L'c', "colour", "Colour output (default: if output isatty(3))",
-			UNSIGNED, NO_ARG, ARGPTR(colour), {{ON}} },
+			UNSIGNED, NO_ARG, 0, ARGPTR(colour), {{ON}} },
 		{ L'C', NULL, "Turn off -c (aka --no-colour)",
-			UNSIGNED, NO_ARG, ARGPTR(colour), {{OFF}} },
+			UNSIGNED, NO_ARG, 0, ARGPTR(colour), {{OFF}} },
 		{ L'p', "prefix", "Prefix lines with the fd whence they came (default: if output isn't coloured)",
-			UNSIGNED, NO_ARG, ARGPTR(prefix), {{ON}} },
+			UNSIGNED, NO_ARG, 0, ARGPTR(prefix), {{ON}} },
 		{ L'P', NULL, "Turn off -p (aka --no-prefix)",
-			UNSIGNED, NO_ARG, ARGPTR(prefix), {{OFF}} },
+			UNSIGNED, NO_ARG, 0, ARGPTR(prefix), {{OFF}} },
 		{ L'S', "columns", "Print streams side-by-side, (bit of a WIP). Note that -[12Pp] are (mostly) silently ignored if this flag is passed. Note also that $COLUMNS is respected if ssss can't get window size from the terminal",
-			UNSIGNED, NO_ARG, ARGPTR(columns), {{true}} },
-		{ L't', "timestamp",	NULL, UNSIGNED, NO_ARG, ARGPTR(timestamps), {{true}} },
-		{ L'q', "quiet",	NULL, UNSIGNED, NO_ARG, ARGPTR(quiet), {{true}} },
-		{ L'v', "verbose",	NULL, UNSIGNED, NO_ARG, ARGPTR(verbose), {{true}} },
-		{ L'V', "version",	NULL, CALLBACK, NO_ARG, 0, version, {{0}} }
+			UNSIGNED, NO_ARG, DRYARG_OR, ARGPTR(flags), {{FLAG_COLUMNS}} },
+		{ L't', "timestamp",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_TIMESTAMPS}} },
+		{ L'q', "quiet",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_QUIET}} },
+		{ L'v', "verbose",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_VERBOSE}} },
+		{ L'V', "version",	NULL, CALLBACK, 0, 0, 0, version, {{0}} }
 	};
 
 	/* No question of static memory here though :( */
@@ -134,6 +131,7 @@ process_cmdline(const int argc, char *const *const argv)
 	datA.progname = *argv;
 	opt[2].assign_val.p = &datA;
 	assert(opt[2].shortopt == L'A');
+	assert(!flags);
 
 	optind = DRYOPT_PARSE(argv, opt);
 	if (argc - optind == 0) {
@@ -141,7 +139,7 @@ process_cmdline(const int argc, char *const *const argv)
 		exit(-1);
 	}
 
-	if (quiet && verbose) {
+	if ((flags & FLAG_QUIET) && (flags & FLAG_VERBOSE)) {
 		fprintf(stderr, "%s: Can't specify both -q and -v\n",
 			argv[0]); /* ^ Because I say so */
 		exit(-1);
@@ -165,13 +163,13 @@ process_cmdline(const int argc, char *const *const argv)
 	case OFF:	flags &= ~FLAG_COLOUR;
 	}
 
-	if (columns) {
+	if (flags & FLAG_COLUMNS) {
 		/* quarter-arsed attempt to warn the user for options that
 		 * conflict with -S */
 		static const char optwarning[] =
 			"%s: -%c is ignored when -S is specified\n";
 
-		if (allinone)
+		if (flags & FLAG_ALLINONE)
 			fprintf(stderr, optwarning, *argv, '1');
 
 		switch (prefix) {
@@ -189,9 +187,5 @@ process_cmdline(const int argc, char *const *const argv)
 		}
 	}
 
-	return flags	| FLAG_ALLINONE * allinone
-			| FLAG_TIMESTAMPS * timestamps
-			| FLAG_VERBOSE * verbose
-			| FLAG_QUIET * quiet
-			| FLAG_COLUMNS * columns;
+	return flags;
 }
