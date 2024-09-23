@@ -26,14 +26,12 @@
 static size_t __attribute__((cold))
 version(struct dryopt const * opt __attribute__((unused)), char const * arg __attribute__((unused)))
 {
-	puts("ssss version " SSSS_VERSION ", DRYopt branch\n\
-ssss -- split standard streams: highlight the stdout and stderr of a process\n\
-Copyright 2023-2024 the Remph\n\n\
+	puts("ssss version " SSSS_VERSION ", DRYopt branch\n\n\
+Copyright 2023-2024 the Remph\n\
 This is free software; permission is given to copy and/or distribute it,\n\
 with or without modification, under the terms of the GNU General Public\n\
 Licence, version 3 or later. For more information, see the GNU GPL, found\n\
-distributed with this in the file `GPL', and at https://gnu.org/licenses/gpl");
-
+distributed with this in the file `GPL', and at <https://gnu.org/licenses/gpl>");
 	exit(EXIT_SUCCESS);
 }
 
@@ -123,7 +121,7 @@ process_cmdline(const int argc, char *const *const argv)
 		{ L't', "timestamp",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_TIMESTAMPS}} },
 		{ L'q', "quiet",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_QUIET}} },
 		{ L'v', "verbose",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_VERBOSE}} },
-		{ L'V', "version",	NULL, CALLBACK, 0, 0, 0, version, {{0}} }
+		{ L'V', "version",	"Print version info and exit", CALLBACK, 0,0,0, version, {{0}} }
 	};
 
 	/* No question of static memory here though :( */
@@ -132,6 +130,12 @@ process_cmdline(const int argc, char *const *const argv)
 	opt[2].assign_val.p = &datA;
 	assert(opt[2].shortopt == L'A');
 	assert(!flags);
+
+	DRYopt_help_args = "PROG [PROGARGS]",
+	DRYopt_help_extra = "\
+Runs PROG with PROGARG(s) if any, and marks which of the output is stdout\n\
+and which is stderr. Returns PROG's exit status\n\n\
+Options:";
 
 	optind = DRYOPT_PARSE(argv, opt);
 	if (argc - optind == 0) {

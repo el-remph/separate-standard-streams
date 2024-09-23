@@ -2,3 +2,4 @@ ssss
 config.h
 compat/unlocked-stdio.h
 *.o
+ssss.1

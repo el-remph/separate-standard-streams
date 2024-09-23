@@ -39,14 +39,19 @@ configure.sh to generate config.h (don't worry, it's not an autoconf
 script). `ssss` depends only on ANSI C and a POSIX-conformant standard C
 library; it should build straight away on any modern unix-like system.
 
+`make all` or `make doc` builds a manual page -- this requires
+[GNU help2man](https://www.gnu.org/s/help2man), a perl script, available at
+<https://ftpmirror.gnu.org/help2man> and on most package managers.
+
 The `-S` switch requires wide-character support from C95. There is currently
 no way to disable this, as I've personally never even seen a pre-C95
 toolchain, but it should be fairly trivial to implement if for some reason
-it becomes necessary (famous last words)
+it becomes necessary (famous last words).
 
-For usage, run it with `-h`. For more information about system
-compatibility and dependencies, see comments in the source (near the top)
-and `configure.sh`, and if you really need that then godspeed to you.
+For usage, run it with `-h` or `--help`, or see the generated ssss.1
+manpage if available. For more information about system compatibility and
+dependencies, see comments in the source (near the top) and `configure.sh`,
+and if you really need that then godspeed to you.
 
 
 Copyright
