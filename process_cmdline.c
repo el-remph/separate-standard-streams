@@ -34,6 +34,7 @@ usage(const char *__restrict__ const progname)
 Usage: %s [OPT(s)] PROG [PROGARG(s)]\n\
 Runs PROG with PROGARG(s) if any, and marks which of the output is stdout\n\
 and which is stderr. Returns PROG's exit status\n\
+\n\
 Options:\n\
 	-1	Output everything to one stream, stdout. Equivalent of piping\n\
 		through |& in bash\n\
@@ -53,8 +54,8 @@ Options:\n\
 	-q	Quiet -- don't print anything of our own, just get busy\n\
 		transforming the output of PROG\n\
 	-v	Verbose -- print more\n\
-	--help, -h	Print this help\n\
-	--version, -V	Print version information\n";
+	--help, -h	Print this help and exit\n\
+	--version, -V	Print version information and exit\n";
 
 	printf(help, progname);
 	exit(EXIT_SUCCESS);
@@ -63,14 +64,12 @@ Options:\n\
 noreturn static void __attribute__((cold))
 version(void)
 {
-	puts("ssss version " SSSS_VERSION "\n\
-ssss -- split standard streams: highlight the stdout and stderr of a process\n\
-Copyright 2023-2024 the Remph\n\n\
+	puts("ssss version " SSSS_VERSION "\n\n\
+Copyright 2023-2024 the Remph\n\
 This is free software; permission is given to copy and/or distribute it,\n\
 with or without modification, under the terms of the GNU General Public\n\
 Licence, version 3 or later. For more information, see the GNU GPL, found\n\
-distributed with this in the file `GPL', and at https://gnu.org/licenses/gpl");
-
+distributed with this in the file `GPL', and at <https://gnu.org/licenses/gpl>");
 	exit(EXIT_SUCCESS);
 }
 
