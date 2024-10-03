@@ -90,7 +90,11 @@ optA_callback(struct dryopt const *__restrict__ const opt, char const *__restric
 	return i;
 }
 
-#define ARGPTR(x) sizeof(x), &(x)
+#define ARGPTR(x) sizeof(x), {&(x)}
+/* slightly more expressive and avoids -Wmissing-braces. We can't init
+   any member of a union other than the first, so use this instead and init
+   them asap */
+#define CALLBACK_OPT(TAKES_ARG) CALLBACK, (TAKES_ARG), DRYARG_WRITE, 0, {NULL}, {{0}}
 
 extern unsigned char
 process_cmdline(const int argc, char *const *const argv)
@@ -107,7 +111,7 @@ process_cmdline(const int argc, char *const *const argv)
 			UNSIGNED, NO_ARG, DRYARG_AND, ARGPTR(flags), {{(unsigned char)~FLAG_ALLINONE}} },
 			/* {{FLAG_ALLINONE ^ UCHAR_MAX}} would also work */
 		{ L'A', "auto", "Set any applicable option characters in ARG (/(?i)[cp]/) to auto-detect their values (ie. default settings)",
-			CALLBACK, REQ_ARG, 0, 0, optA_callback, {{0}} /*init below*/ },
+			CALLBACK_OPT(REQ_ARG) },
 		{ L'c', "colour", "Colour output (default: if output isatty(3))",
 			UNSIGNED, NO_ARG, 0, ARGPTR(colour), {{ON}} },
 		{ L'C', NULL, "Turn off -c (aka --no-colour)",
@@ -121,14 +125,19 @@ process_cmdline(const int argc, char *const *const argv)
 		{ L't', "timestamp",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_TIMESTAMPS}} },
 		{ L'q', "quiet",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_QUIET}} },
 		{ L'v', "verbose",	NULL, UNSIGNED, 0, DRYARG_OR, ARGPTR(flags), {{FLAG_VERBOSE}} },
-		{ L'V', "version",	"Print version info and exit", CALLBACK, 0,0,0, version, {{0}} }
+		{ L'V', "version",	"Print version info and exit", CALLBACK_OPT(NO_ARG) }
 	};
 
 	/* No question of static memory here though :( */
 	struct optA_callback_data datA = { NULL, &colour, &prefix };
 	datA.progname = *argv;
 	opt[2].assign_val.p = &datA;
+	/* Also handle DEFER_UNIONS */
+	opt[2].callback = optA_callback;
 	assert(opt[2].shortopt == L'A');
+	opt[11].callback = version;
+	assert(opt[11].shortopt == L'V');
+
 	assert(!flags);
 
 	DRYopt_help_args = "PROG [PROGARGS]",
