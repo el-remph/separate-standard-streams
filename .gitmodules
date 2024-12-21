@@ -1,4 +1,4 @@
 [submodule "dryopt"]
 	path = dryopt
-	url = https://github.com/el-remph/dryopt.git
+	url = https://git.sr.ht/~remph/dryopt
 	branch = master
